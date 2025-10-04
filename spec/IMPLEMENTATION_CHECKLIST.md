@@ -65,7 +65,7 @@
 - [ ] Initialize git repo
 - [ ] Create folder structure:
 
-  ```
+  ```text
   creative-automation-pipeline/
   ├── src/
   │   ├── models/
@@ -80,7 +80,7 @@
 
 - [ ] Create `requirements.txt`:
 
-  ```
+  ```text
   fastapi==0.104.1
   pydantic==2.5.0
   pydantic-settings==2.1.0
@@ -94,7 +94,7 @@
 
 - [ ] Create `.env.example`:
 
-  ```
+  ```shell
   OPENAI_API_KEY=your_key_here
   ADOBE_FIREFLY_CLIENT_ID=optional
   ADOBE_FIREFLY_CLIENT_SECRET=optional
@@ -103,7 +103,7 @@
 
 - [ ] Create `.gitignore`:
 
-  ```
+  ```shell
   .env
   __pycache__/
   *.pyc
@@ -163,7 +163,7 @@
 - [ ] Create `src/services/storage.py`:
   - [ ] `StorageManager` class
   - [ ] `get_asset()` - check if exists
-  - [ ] `save_output()` - save to outputs/<product>/<ratio>/
+  - [ ] `save_output()` - save to `outputs/<product>/<ratio>/`
   - [ ] `save_metadata()` - JSON sidecar
   - [ ] Test file I/O
 
@@ -449,4 +449,19 @@
 
 **Questions during implementation?** Document them and address in "Assumptions & Limitations" section.
 
-**Good luck! You've got this! 🚀**
+---
+
+## Checklist Update (uv + gpt-image-1)
+
+- [ ] Use uv for environment management:
+
+  ```bash
+  uv venv .venv && . ./.venv/Scripts/Activate.ps1  # Windows
+  # source .venv/bin/activate                      # macOS/Linux
+  uv pip install -r requirements.txt
+  ```
+
+- [ ] Configure `.env` with `OPENAI_API_KEY` (for gpt-image-1)
+- [ ] GenAI layer: Primary OpenAI gpt-image-1; Optional Google Imagen; Free fallback via HF SDXL/Local SDXL
+- [ ] Update any “DALL-E 3” references to “gpt-image-1” in docs and tests
+- [ ] Troubleshooting: treat “gpt-image-1 rate limit” similarly to prior DALL-E guidance (retry/backoff)

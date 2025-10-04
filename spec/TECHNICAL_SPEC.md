@@ -76,8 +76,10 @@ This specification outlines the technical implementation plan for Adobe's FDE ta
 | **Runtime** | Python | 3.11+ | Async support, rich ecosystem |
 | **API Framework** | FastAPI | 0.104+ | Type-safe, async, auto-docs |
 | **Validation** | Pydantic | 2.5+ | Data validation, settings management |
-| **GenAI - Primary** | OpenAI DALL-E 3 | Latest | Accessible, high quality, fallback option |
-| **GenAI - Secondary** | Adobe Firefly API | Latest | Brand-safe, ideal for production (if available) |
+| **GenAI - Primary** | OpenAI gpt-image-1 | Latest | Accessible, high quality |
+| **GenAI - Secondary (optional)** | Google Imagen (Vertex AI) | Latest | Enterprise alternative |
+| **GenAI - Enterprise (optional)** | Adobe Firefly | Latest | Strong brand safety; not enabled in demo (no subscription) |
+| **GenAI - Free Fallback** | Hugging Face SDXL Inference / Local SDXL-Turbo | Latest | Zero-cost fallback (rate-limited/CPU) |
 | **Image Processing** | Pillow (PIL) | 10.1+ | Resize, text overlay, format conversion |
 | **Storage - Local** | File system | - | Development/demo mode |
 | **Storage - Cloud** | Azure Blob / AWS S3 | Latest SDK | Production-ready (optional) |
@@ -86,35 +88,36 @@ This specification outlines the technical implementation plan for Adobe's FDE ta
 | **HTTP Client** | httpx | 0.25+ | Async HTTP for API calls |
 | **Testing** | pytest + pytest-asyncio | Latest | Async test support |
 | **Linting** | ruff | Latest | Fast Python linter |
+| **Containerization** | Docker + Docker Compose | Latest | Reproducible runs, easy demo |
 
 ### 3.2 API Requirements
 
 **Option A (Recommended for Demo):**
 
-- OpenAI API key with DALL-E 3 access (~$0.04-0.08 per image)
+- OpenAI API key with gpt-image-1 access (~$0.04-0.08 per image)
 - Estimated cost for demo: $2-5
 
-**Option B (Production-Grade):**
+**Option B (Alternative Provider):**
 
-- Adobe Firefly API credentials (primary)
-- OpenAI API key (fallback)
+- Google Imagen via Vertex AI (requires GCP project/billing; optional)
+- Keep OpenAI as primary for the demo
 
-**Option C (Mock Mode):**
+**Option C (Free/Mock Mode):**
 
-- Use placeholder images from Unsplash API (free)
-- Focus on pipeline architecture over GenAI integration
+- Hugging Face Inference API for SDXL (free, rate-limited)
+- Local SDXL-Turbo via onnxruntime (CPU; slower but free)
+- Use placeholder images from Unsplash/Lorem Picsum (pipeline demonstration)
 
 ### 3.3 Development Environment
 
 ```bash
 # Required
 Python 3.11+
-pip / poetry
+uv
 Git
 
 # Optional but Recommended
 Docker Desktop
-VS Code with Python extension
 Postman / Thunder Client (API testing)
 OBS Studio / ShareX (demo recording)
 ```
@@ -143,8 +146,9 @@ flowchart TD
     or generate]
     D[Reuse Asset]
     E["GenAI Generation Layer
-    - Adobe Firefly API (primary)
-    - OpenAI DALL-E 3 (fallback)
+    - OpenAI gpt-image-1 (primary)
+    - Google Imagen (optional)
+    - Hugging Face SDXL / Local SDXL (free fallback)
     - Retry logic + backoff"]
     F[Post-Processing Layer
     - Resize to 1:1, 9:16, 16:9
@@ -194,8 +198,9 @@ flowchart TD
 
 #### 4.2.3 GenAI Integration
 
-- **Primary:** Adobe Firefly `/v3/images/generate`
-- **Fallback:** OpenAI `/v1/images/generations` (DALL-E 3)
+- **Primary:** OpenAI Images API `/v1/images/generations` with model `gpt-image-1`
+- **Optional Providers:** Google Imagen (Vertex AI); Adobe Firefly (not enabled in demo due to no subscription)
+- **Free Fallbacks:** Hugging Face SDXL Inference or local SDXL-Turbo
 - **Prompt Engineering:** Include brand keywords, product name, market context
 - **Error Handling:** 3 retries with exponential backoff (2s, 4s, 8s)
 
@@ -235,7 +240,7 @@ creative-automation-pipeline/
 ├── README.md                    # Comprehensive documentation
 ├── requirements.txt             # Python dependencies
 ├── .env.example                 # Environment variables template
-├── Makefile                     # Convenience commands
+├── Dockerfile                   # Container image for CLI/API
 ├── docker-compose.yml           # Optional containerization
 │
 ├── src/
@@ -254,8 +259,7 @@ creative-automation-pipeline/
 │   │   ├── ingestion.py         # Brief validation & parsing
 │   │   ├── storage.py           # Asset management (local/cloud)
 │   │   ├── genai.py             # GenAI orchestration
-│   │   ├── firefly_client.py    # Adobe Firefly API wrapper
-│   │   ├── dalle_client.py      # OpenAI DALL-E 3 wrapper
+│   │   ├── openai_image_client.py  # OpenAI gpt-image-1 wrapper
 │   │   ├── processor.py         # Image resizing & text overlay
 │   │   └── compliance.py        # Brand checks (optional)
 │   │
@@ -339,10 +343,7 @@ ASPECT_RATIOS = [
 #### 5.2.2 GenAI Service (`src/services/genai.py`)
 
 ```python
-import asyncio
-from typing import Optional
-from src.services.firefly_client import FireflyClient
-from src.services.dalle_client import DalleClient
+from src.services.openai_image_client import OpenAIImageClient
 from src.utils.logger import get_logger
 from src.utils.retry import async_retry
 
@@ -351,9 +352,8 @@ logger = get_logger(__name__)
 class GenAIOrchestrator:
     """Orchestrates GenAI image generation with fallback logic"""
     
-    def __init__(self, firefly_client: Optional[FireflyClient], dalle_client: DalleClient):
-        self.firefly = firefly_client
-        self.dalle = dalle_client
+    def __init__(self, openai_client: OpenAIImageClient):
+        self.openai = openai_client
     
     @async_retry(max_attempts=3, backoff_factor=2)
     async def generate_image(
@@ -363,32 +363,16 @@ class GenAIOrchestrator:
         height: int,
         product_id: str
     ) -> bytes:
-        """Generate image with fallback strategy"""
-        
-        # Try Firefly first (brand-safe, Adobe preference)
-        if self.firefly and self.firefly.is_available():
-            try:
-                logger.info(f"Attempting Firefly generation for {product_id}")
-                image_data = await self.firefly.generate(
-                    prompt=prompt,
-                    width=width,
-                    height=height
-                )
-                logger.info(f"Firefly success for {product_id}")
-                return image_data
-            except Exception as e:
-                logger.warning(f"Firefly failed for {product_id}: {e}")
-        
-        # Fallback to DALL-E 3
-        logger.info(f"Using DALL-E 3 for {product_id}")
-        image_data = await self.dalle.generate(
+        """Generate image with primary provider and size mapping"""
+        logger.info(f"Using OpenAI gpt-image-1 for {product_id}")
+        image_data = await self.openai.generate(
             prompt=prompt,
-            size=self._map_size_to_dalle(width, height)
+            size=self._map_size_to_openai(width, height)
         )
         return image_data
     
-    def _map_size_to_dalle(self, width: int, height: int) -> str:
-        """Map arbitrary size to DALL-E 3 supported sizes"""
+    def _map_size_to_openai(self, width: int, height: int) -> str:
+        """Map arbitrary size to OpenAI supported sizes"""
         ratio = width / height
         if abs(ratio - 1.0) < 0.1:
             return "1024x1024"
@@ -398,16 +382,14 @@ class GenAIOrchestrator:
             return "1024x1792"  # Portrait
 ```
 
-#### 5.2.3 DALL-E Client (`src/services/dalle_client.py`)
+#### 5.2.3 OpenAI Image Client (`src/services/openai_image_client.py`)
 
 ```python
 import httpx
 import base64
-from typing import Optional
-from src.utils.config import settings
 
-class DalleClient:
-    """OpenAI DALL-E 3 API client"""
+class OpenAIImageClient:
+    """OpenAI gpt-image-1 API client"""
     
     BASE_URL = "https://api.openai.com/v1"
     
@@ -428,20 +410,17 @@ class DalleClient:
         size: str = "1024x1024",
         quality: str = "standard"
     ) -> bytes:
-        """Generate image using DALL-E 3"""
-        
+        """Generate image using gpt-image-1"""
         payload = {
-            "model": "dall-e-3",
+            "model": "gpt-image-1",
             "prompt": prompt,
             "size": size,
             "quality": quality,
             "n": 1,
             "response_format": "b64_json"
         }
-        
         response = await self.client.post("/images/generations", json=payload)
         response.raise_for_status()
-        
         data = response.json()
         image_b64 = data["data"][0]["b64_json"]
         return base64.b64decode(image_b64)
@@ -531,9 +510,9 @@ import asyncio
 import json
 import argparse
 from pathlib import Path
-from src.models.brief import CampaignBrief
+from src.models.brief import CampaignBrief, ASPECT_RATIOS
 from src.services.genai import GenAIOrchestrator
-from src.services.dalle_client import DalleClient
+from src.services.openai_image_client import OpenAIImageClient
 from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
 from src.utils.config import settings
@@ -552,8 +531,8 @@ async def process_campaign(brief_path: str):
     logger.info(f"Processing campaign: {brief.campaign_id}")
     
     # Initialize services
-    dalle_client = DalleClient(api_key=settings.OPENAI_API_KEY)
-    orchestrator = GenAIOrchestrator(firefly_client=None, dalle_client=dalle_client)
+    openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+    orchestrator = GenAIOrchestrator(openai_client=openai_client)
     processor = ImageProcessor()
     storage = StorageManager(base_path=Path("outputs"))
     
@@ -581,7 +560,7 @@ async def process_campaign(brief_path: str):
         # Execute in parallel
         await asyncio.gather(*tasks)
     
-    await dalle_client.close()
+    await openai_client.close()
     logger.info(f"Campaign {brief.campaign_id} completed!")
 
 async def generate_variant(orchestrator, processor, storage, product, brief, ratio, prompt):
@@ -649,8 +628,11 @@ class Settings(BaseSettings):
     
     # API Keys
     OPENAI_API_KEY: str
-    ADOBE_FIREFLY_CLIENT_ID: Optional[str] = None
-    ADOBE_FIREFLY_CLIENT_SECRET: Optional[str] = None
+    HUGGINGFACE_TOKEN: Optional[str] = None
+    # Google (optional)
+    GOOGLE_PROJECT_ID: Optional[str] = None
+    GOOGLE_LOCATION: Optional[str] = None
+    GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None  # path to SA JSON
     
     # Storage
     STORAGE_MODE: str = "local"  # "local" | "azure" | "s3"
@@ -665,11 +647,45 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
     
+    # Provider selection
+    GENAI_PROVIDER: str = "openai"  # openai | google | huggingface | local | mock
+    GENAI_FALLBACKS: str = "google,huggingface,mock"
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
 
 settings = Settings()
+```
+
+### 5.4a Containerization
+
+**Goals:** Reproducible local runs and simplified demo execution without managing Python environments on host.
+
+**Artifacts:** `Dockerfile`, `docker-compose.yml`
+
+**Image:**
+
+- Base: `python:3.11-slim`
+- Installs `uv` and uses `uv pip install --system -r requirements.txt`
+- Sets `WORKDIR /app`
+- Default CMD shows CLI help; override via Compose
+
+**Compose Service:**
+
+- Service `app` builds from the Dockerfile
+- Mounts repo, persists `outputs/` and `assets/`
+- Loads environment from `.env`
+- Default command runs CLI with `examples/brief_single_product.json`
+- Port `8000` mapped for future FastAPI usage
+
+**Usage:**
+
+```bash
+docker compose up --build
+docker compose run --rm app python -m src.cli --brief examples/brief_multi_product.json
+# If running API later:
+# docker compose run --rm -p 8000:8000 app uvicorn src.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### 5.4 Example Campaign Brief
@@ -702,16 +718,31 @@ settings = Settings()
 **Unit Tests:**
 
 - `test_brief_validation()` - Pydantic schema validation
-- `test_dalle_client()` - Mock API responses
+- `test_openai_image_client()` - Mock API responses
 - `test_image_resize()` - PIL operations
 - `test_text_overlay()` - Text rendering
 - `test_storage_manager()` - File I/O
 
 **Integration Tests:**
 
-- `test_end_to_end_single_product()` - Full pipeline with 1 product
-- `test_asset_reuse()` - Check storage before generation
-- `test_api_fallback()` - Firefly failure → DALL-E fallback
+```python
+# tests/test_integration.py
+@pytest.mark.asyncio
+async def test_end_to_end_pipeline(tmp_path):
+    """Test full pipeline with mock GenAI"""
+    
+    # Mock gpt-image-1 response
+    mock_image = create_mock_image()
+    
+    with patch('src.services.openai_image_client.OpenAIImageClient.generate', return_value=mock_image):
+        # Run pipeline
+        result = await process_campaign("tests/fixtures/example_brief.json")
+        
+        # Verify outputs
+        assert (tmp_path / "outputs/prod_001/1:1/image.png").exists()
+        assert (tmp_path / "outputs/prod_001/9:16/image.png").exists()
+        assert (tmp_path / "outputs/prod_001/16:9/image.png").exists()
+```
 
 **Target Coverage:** 80%+
 
@@ -906,14 +937,14 @@ Our automated creative pipeline has encountered a delay for the **Summer Splash 
 
 - **Product Affected:** Ultra Protection Sunscreen SPF 50 (`prod_sunscreen_spf50`)
 - **Variant Progress:** 2/3 aspect ratios completed (missing 9:16 portrait)
-- **Root Cause:** OpenAI DALL-E 3 API rate limit exceeded at 14:35 UTC
+- **Root Cause:** OpenAI gpt-image-1 API rate limit exceeded at 14:35 UTC
 - **Impact:** Campaign launch delayed by approximately 30 minutes
 
 **Technical Details:**
 
 ```
 Error: Rate limit exceeded for image generation
-API: OpenAI DALL-E 3
+API: OpenAI gpt-image-1
 Retry Queue: Job scheduled for automatic retry at 15:05 UTC
 ```
 
@@ -944,7 +975,7 @@ Best regards,
 14:30:22 | INFO  | Started generation for prod_sunscreen_spf50
 14:32:15 | OK    | Completed 1:1 (1024x1024)
 14:33:40 | OK    | Completed 16:9 (1920x1080)
-14:35:08 | ERROR | DALL-E 3 rate limit: 429 Too Many Requests
+14:35:08 | ERROR | gpt-image-1 rate limit: 429 Too Many Requests
 14:35:09 | INFO  | Queued for retry in 30 minutes
 ```
 
@@ -1123,10 +1154,10 @@ async def test_image_resize():
 async def test_end_to_end_pipeline(tmp_path):
     """Test full pipeline with mock GenAI"""
     
-    # Mock DALL-E response
+    # Mock gpt-image-1 response
     mock_image = create_mock_image()
     
-    with patch('src.services.dalle_client.DalleClient.generate', return_value=mock_image):
+    with patch('src.services.openai_image_client.OpenAIImageClient.generate', return_value=mock_image):
         # Run pipeline
         result = await process_campaign("tests/fixtures/example_brief.json")
         
@@ -1152,7 +1183,7 @@ async def test_end_to_end_pipeline(tmp_path):
 
 ### 10.1 Assumptions
 
-1. **API Access:** OpenAI API key with DALL-E 3 access is available
+1. **API Access:** OpenAI API key with gpt-image-1 access is available
 2. **Internet Connectivity:** Stable connection for API calls
 3. **Local Execution:** Pipeline runs on developer machine (Windows/macOS/Linux)
 4. **Input Format:** Campaign briefs provided as valid JSON
@@ -1180,7 +1211,7 @@ async def test_end_to_end_pipeline(tmp_path):
 
 ### 10.4 Limitations
 
-1. **GenAI Quality:** Output depends on DALL-E 3 prompt quality
+1. **GenAI Quality:** Output depends on prompt quality and model constraints
 2. **Brand Consistency:** Basic text overlay, not full brand guidelines
 3. **Scalability:** Single-threaded, not optimized for 100s of concurrent campaigns
 4. **Error Recovery:** Simple retry logic, no sophisticated failure handling
@@ -1248,11 +1279,18 @@ async def test_end_to_end_pipeline(tmp_path):
 # Setup
 git clone <your-repo>
 cd creative-automation-pipeline
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+
+# Create & activate environment (uv)
+uv venv .venv
+. ./.venv/Scripts/Activate.ps1   # Windows PowerShell
+# source .venv/bin/activate      # macOS/Linux
+
+# Install dependencies
+uv pip install -r requirements.txt
+
+# Configure environment
 cp .env.example .env
-# Edit .env with your OPENAI_API_KEY
+# Edit .env with your OPENAI_API_KEY (and optional provider keys)
 
 # Run pipeline
 python -m src.cli --brief examples/brief_single_product.json
