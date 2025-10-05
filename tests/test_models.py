@@ -73,9 +73,9 @@ def test_aspect_ratios_defined():
     assert len(ASPECT_RATIOS) == 3
 
     ratio_names = [r.name for r in ASPECT_RATIOS]
-    assert "1:1" in ratio_names
-    assert "9:16" in ratio_names
-    assert "16:9" in ratio_names
+    assert "1x1" in ratio_names
+    assert "9x16" in ratio_names
+    assert "16x9" in ratio_names
 
 
 def test_product_optional_fields():
