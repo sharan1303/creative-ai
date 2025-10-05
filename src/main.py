@@ -82,12 +82,14 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
 
     total_variants = 0
     total_reused = 0
+    results: List[VariantResult] = []
 
     # Build tasks across all products/ratios
     async def _run_for_product(product_idx: int, total_products: int, product):
-        nonlocal total_variants, total_reused
+        nonlocal total_variants, total_reused, results
         tasks = []
-        for ratio in ASPECT_RATIOS:
+        ratios = list(ASPECT_RATIOS)
+        for ratio in ratios:
             tasks.append(
                 _generate_variant(
                     orchestrator=orchestrator,
@@ -98,18 +100,37 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
                     ratio=ratio,
                 )
             )
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
+        task_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for ratio, result in zip(ratios, task_results):
             if isinstance(result, Exception):
                 logger.error(
                     "[FAILED] Variant generation failed for product %s: %s",
                     product.id,
                     result,
                 )
+                results.append(
+                    VariantResult(
+                        product_id=product.id,
+                        ratio=ratio.name,
+                        path="",
+                        reused=False,
+                        success=False,
+                        error=str(result),
+                    )
+                )
             else:
                 total_variants += 1
                 if result.get("reused"):
                     total_reused += 1
+                results.append(
+                    VariantResult(
+                        product_id=product.id,
+                        ratio=ratio.name,
+                        path=result.get("path", ""),
+                        reused=bool(result.get("reused")),
+                        success=True,
+                    )
+                )
 
     try:
         await asyncio.gather(
@@ -126,6 +147,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         total_variants=total_variants,
         assets_reused=total_reused,
         new_generations=total_variants - total_reused,
+        results=results,
     )
 
 
@@ -147,7 +169,7 @@ class JobStatusResponse(BaseModel):
     new_generations: int | None = None
     started_at: str | None = None
     finished_at: str | None = None
-    # results will be added in a later change
+    results: List[VariantResult] | None = None
 
 
 _JOB_STORE: Dict[str, Dict[str, Any]] = {}
@@ -186,6 +208,7 @@ async def get_job(job_id: str) -> JobStatusResponse:
         new_generations=job.get("new_generations"),
         started_at=job.get("started_at"),
         finished_at=job.get("finished_at"),
+        results=job.get("results"),
     )
 
 
@@ -214,9 +237,11 @@ async def _run_job(job_id: str, brief_dict: Dict[str, Any]) -> None:
 
     total_variants = 0
     total_reused = 0
+    job_results: List[VariantResult] = []
 
     async def _run_for_product(product):
-        nonlocal total_variants, total_reused
+        nonlocal total_variants, total_reused, job_results
+        ratios = list(ASPECT_RATIOS)
         tasks = [
             _generate_variant(
                 orchestrator=orchestrator,
@@ -226,16 +251,35 @@ async def _run_job(job_id: str, brief_dict: Dict[str, Any]) -> None:
                 brief=brief,
                 ratio=ratio,
             )
-            for ratio in ASPECT_RATIOS
+            for ratio in ratios
         ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        for result in results:
+        results_list = await asyncio.gather(*tasks, return_exceptions=True)
+        for ratio, result in zip(ratios, results_list):
             if isinstance(result, Exception):
                 logger.error("Job %s: variant failed for product %s: %s", job_id, product.id, result)
+                job_results.append(
+                    VariantResult(
+                        product_id=product.id,
+                        ratio=ratio.name,
+                        path="",
+                        reused=False,
+                        success=False,
+                        error=str(result),
+                    )
+                )
             else:
                 total_variants += 1
                 if result.get("reused"):
                     total_reused += 1
+                job_results.append(
+                    VariantResult(
+                        product_id=product.id,
+                        ratio=ratio.name,
+                        path=result.get("path", ""),
+                        reused=bool(result.get("reused")),
+                        success=True,
+                    )
+                )
 
     try:
         await asyncio.gather(*[_run_for_product(product) for product in brief.products])
@@ -250,6 +294,7 @@ async def _run_job(job_id: str, brief_dict: Dict[str, Any]) -> None:
         job["total_variants"] = total_variants
         job["assets_reused"] = total_reused
         job["new_generations"] = total_variants - total_reused
+        job["results"] = [r.model_dump() for r in job_results]
 
 
 # Internal helpers (duplicated lightly to avoid importing CLI module in API layer)
