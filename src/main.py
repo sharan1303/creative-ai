@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
 from src.services.genai import GenAIOrchestrator
@@ -31,13 +32,34 @@ app = FastAPI(
 )
 
 
-@app.get("/health")
-async def health() -> Dict[str, str]:
-    return {"status": "ok"}
+class HealthResponse(BaseModel):
+    status: str
 
 
-@app.post("/campaigns/process")
-async def process_campaign(brief: CampaignBrief) -> Dict[str, Any]:
+class VariantResult(BaseModel):
+    product_id: str
+    ratio: str
+    path: str
+    reused: bool
+    success: bool = True
+    error: str | None = None
+
+
+class CampaignProcessResponse(BaseModel):
+    campaign_id: str
+    total_variants: int
+    assets_reused: int
+    new_generations: int
+    results: List[VariantResult] = Field(default_factory=list)
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
+    return HealthResponse(status="ok")
+
+
+@app.post("/campaigns/process", response_model=CampaignProcessResponse)
+async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     """Process a campaign brief and generate creative assets.
 
     This endpoint executes a similar workflow as the CLI pipeline but operates on
@@ -97,12 +119,12 @@ async def process_campaign(brief: CampaignBrief) -> Dict[str, Any]:
     finally:
         await openai_client.close()
 
-    return {
-        "campaign_id": brief.campaign_id,
-        "total_variants": total_variants,
-        "assets_reused": total_reused,
-        "new_generations": total_variants - total_reused,
-    }
+    return CampaignProcessResponse(
+        campaign_id=brief.campaign_id,
+        total_variants=total_variants,
+        assets_reused=total_reused,
+        new_generations=total_variants - total_reused,
+    )
 
 
 # Internal helpers (duplicated lightly to avoid importing CLI module in API layer)
