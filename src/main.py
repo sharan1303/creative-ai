@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any, Dict, List
+import uuid
+from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
@@ -125,6 +127,129 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         assets_reused=total_reused,
         new_generations=total_variants - total_reused,
     )
+
+
+# -----------------------
+# Background job handling
+# -----------------------
+
+class JobCreateResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    campaign_id: str | None = None
+    total_variants: int | None = None
+    assets_reused: int | None = None
+    new_generations: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    # results will be added in a later change
+
+
+_JOB_STORE: Dict[str, Dict[str, Any]] = {}
+
+
+@app.post("/campaigns/jobs", response_model=JobCreateResponse, status_code=202)
+async def create_job(brief: CampaignBrief, background_tasks: BackgroundTasks) -> JobCreateResponse:
+    job_id = str(uuid.uuid4())
+    _JOB_STORE[job_id] = {
+        "status": "pending",
+        "campaign_id": brief.campaign_id,
+        "started_at": None,
+        "finished_at": None,
+        "total_variants": None,
+        "assets_reused": None,
+        "new_generations": None,
+    }
+
+    # Schedule background execution
+    background_tasks.add_task(_run_job, job_id, brief.model_dump())
+
+    return JobCreateResponse(job_id=job_id, status="pending")
+
+
+@app.get("/campaigns/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job(job_id: str) -> JobStatusResponse:
+    job = _JOB_STORE.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return JobStatusResponse(
+        job_id=job_id,
+        status=job.get("status", "unknown"),
+        campaign_id=job.get("campaign_id"),
+        total_variants=job.get("total_variants"),
+        assets_reused=job.get("assets_reused"),
+        new_generations=job.get("new_generations"),
+        started_at=job.get("started_at"),
+        finished_at=job.get("finished_at"),
+    )
+
+
+async def _run_job(job_id: str, brief_dict: Dict[str, Any]) -> None:
+    job = _JOB_STORE[job_id]
+    job["status"] = "running"
+    job["started_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Reconstruct brief
+    brief = CampaignBrief(**brief_dict)
+
+    # Initialize services
+    try:
+        if not settings.OPENAI_API_KEY:
+            raise RuntimeError("OPENAI_API_KEY not configured")
+
+        openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+        orchestrator = GenAIOrchestrator(openai_client=openai_client)
+        processor = ImageProcessor()
+        storage = StorageManager(base_path=Path("outputs"))
+    except Exception as exc:
+        logger.error("Job %s initialization failed: %s", job_id, exc)
+        job["status"] = "failed"
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        return
+
+    total_variants = 0
+    total_reused = 0
+
+    async def _run_for_product(product):
+        nonlocal total_variants, total_reused
+        tasks = [
+            _generate_variant(
+                orchestrator=orchestrator,
+                processor=processor,
+                storage=storage,
+                product=product,
+                brief=brief,
+                ratio=ratio,
+            )
+            for ratio in ASPECT_RATIOS
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error("Job %s: variant failed for product %s: %s", job_id, product.id, result)
+            else:
+                total_variants += 1
+                if result.get("reused"):
+                    total_reused += 1
+
+    try:
+        await asyncio.gather(*[_run_for_product(product) for product in brief.products])
+        job["status"] = "succeeded"
+    except Exception as exc:  # pragma: no cover
+        logger.error("Job %s failed: %s", job_id, exc)
+        job["status"] = "failed"
+    finally:
+        await openai_client.close()
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        job["campaign_id"] = brief.campaign_id
+        job["total_variants"] = total_variants
+        job["assets_reused"] = total_reused
+        job["new_generations"] = total_variants - total_reused
 
 
 # Internal helpers (duplicated lightly to avoid importing CLI module in API layer)
