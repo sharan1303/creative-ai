@@ -4,7 +4,6 @@ This module wires Celery to Redis for broker and result backend.
 """
 from __future__ import annotations
 
-import os
 from celery import Celery
 
 from src.utils.config import settings
@@ -16,6 +15,7 @@ celery_app = Celery(
     "creative_ai",
     broker=BROKER_URL,
     backend=RESULT_BACKEND,
+    include=["src.tasks"],  # ensure tasks are imported/registered in worker processes
 )
 
 celery_app.conf.update(
@@ -26,3 +26,7 @@ celery_app.conf.update(
     enable_utc=True,
     task_always_eager=False,
 )
+
+# Ensure tasks are registered when the worker imports this module
+# This import side-effect registers tasks decorated with celery_app.task
+import src.tasks  # noqa: F401,E402

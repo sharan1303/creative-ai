@@ -25,6 +25,10 @@ services:
   worker:
     build: .
     container_name: creative-ai-worker
+    volumes:
+      - ./:/app
+      - ./outputs:/app/outputs
+      - ./assets:/app/assets
     env_file:
       - .env
     depends_on:
