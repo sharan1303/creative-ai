@@ -1,0 +1,21 @@
+{
+  "campaign_id": "test-campaign-001",
+  "products": [
+    {
+      "id": "test_prod_1",
+      "name": "Test Product 1",
+      "description": "First test product"
+    },
+    {
+      "id": "test_prod_2",
+      "name": "Test Product 2",
+      "description": "Second test product"
+    }
+  ],
+  "target_market": "US-Test",
+  "target_audience": "Test audience for automated testing",
+  "campaign_message": "Test Campaign Message",
+  "brand_colors": ["#FF0000", "#00FF00", "#0000FF"],
+  "locale": "en"
+}
+
