@@ -1,0 +1,30 @@
+# Core Framework
+fastapi==0.115.0
+pydantic==2.9.2
+pydantic-settings==2.5.2
+uvicorn==0.32.0
+
+# HTTP Client
+httpx==0.27.2
+
+# Image Processing
+Pillow==11.0.0
+
+# Async Support
+asyncio-throttle==1.0.2
+
+# Testing
+pytest==7.4.4
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# Code Quality
+ruff==0.1.14
+
+# Optional: Cloud Storage
+# azure-storage-blob==12.19.0
+# boto3==1.34.19
+
+# Optional: Google Cloud (Vertex AI)
+# google-cloud-aiplatform==1.38.1
+
