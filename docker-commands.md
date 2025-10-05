@@ -1,13 +1,13 @@
-## Creative AI — FastAPI + Docker Quickstart
+# Creative AI — FastAPI + Docker Quickstart
 
 This project exposes image generation via FastAPI and ships with Docker Compose for local development. Use the steps below to run the API and trigger image generation from your host.
 
-### Prerequisites
+## Prerequisites
 
 - Docker Desktop
 - A valid OpenAI API key
 
-### 1) Environment
+## Environment
 
 Create a `.env` file in the project root with at least:
 
@@ -22,7 +22,7 @@ Notes:
 - If `API_AUTH_TOKEN` is set, every request must include header `X-API-Key: <value>`.
 - Leave `API_AUTH_TOKEN` empty to disable auth during local testing.
 
-### 2) Start the stack
+## Start the stack
 
 Runs FastAPI (uvicorn), Redis, and a Celery worker.
 
@@ -31,13 +31,13 @@ cd C:\Users\shara\Source-Code\Projects\creative-ai
 docker compose up -d --build
 ```
 
-### 3) Health check
+## Health check
 
 ```powershell
 Invoke-RestMethod http://localhost:8000/health
 ```
 
-### 4) Trigger synchronous image generation
+## Trigger synchronous image generation
 
 Blocks until all variants are processed. Uses the example brief at `examples/brief_multi_product.json`.
 
@@ -63,7 +63,7 @@ curl -X POST \
   --data @examples/brief_multi_product.json
 ```
 
-### 5) Trigger background job and poll status
+## Trigger background job and poll status
 
 PowerShell:
 
@@ -93,12 +93,12 @@ JOB_ID=$(curl -s -X POST \
 curl -s "http://localhost:8000/campaigns/jobs/${JOB_ID}" -H "X-API-Key: dev-token-123" | jq .
 ```
 
-### 6) Outputs
+## Outputs
 
 - Generated assets and metadata are saved under `outputs/` on your host (bind-mounted into the container).
 - Re-run with the same `campaign_id` and product IDs to reuse existing assets when available.
 
-### 7) Logs and lifecycle
+## Logs and lifecycle
 
 ```powershell
 # Follow logs
@@ -112,7 +112,7 @@ docker compose down
 docker compose up -d --build --force-recreate app
 ```
 
-### Troubleshooting
+## Troubleshooting
 
 - 401 Invalid or missing API key
   - Ensure the header matches the container’s `API_AUTH_TOKEN` exactly:
@@ -129,7 +129,7 @@ docker compose up -d --build --force-recreate app
 - Verify the app is healthy
   - `docker compose logs -f app` and `docker compose logs -f worker`
 
-### Useful variations
+## Useful variations
 
 - Minimal smoke test (PowerShell):
 
