@@ -1,0 +1,26 @@
+{
+  "campaign_id": "summer-splash-eu-2025",
+  "products": [
+    {
+      "id": "prod_beach_towel_001",
+      "name": "Premium Beach Towel",
+      "description": "Luxurious oversized beach towel with vibrant patterns"
+    },
+    {
+      "id": "prod_sunscreen_spf50",
+      "name": "Ultra Protection Sunscreen SPF 50",
+      "description": "Dermatologist-tested sunscreen for all skin types"
+    },
+    {
+      "id": "prod_beach_umbrella_003",
+      "name": "Portable Beach Umbrella",
+      "description": "UV-blocking portable beach umbrella with carrying case"
+    }
+  ],
+  "target_market": "EU",
+  "target_audience": "Active families aged 25-45",
+  "campaign_message": "Make Waves This Summer!",
+  "brand_colors": ["#FF6B35", "#004E89", "#F4F4F4"],
+  "locale": "en"
+}
+
