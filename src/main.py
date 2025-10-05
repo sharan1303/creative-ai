@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any, Dict, List
 import uuid
 from datetime import datetime, timezone
+import secrets
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
@@ -22,6 +23,8 @@ from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
 from src.utils.config import settings
 from src.utils.logger import get_logger
+from src.celery_app import celery_app
+from src.tasks import process_campaign_task
 
 logger = get_logger(__name__)
 
@@ -68,7 +71,7 @@ def require_api_key(x_api_key: str | None = Header(default=None, alias=API_KEY_H
         # If not configured, leave open but warn
         logger.warning("API key not configured; skipping auth")
         return
-    if not x_api_key or x_api_key != expected:
+    if not x_api_key or not secrets.compare_digest(x_api_key, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
@@ -94,9 +97,9 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         orchestrator = GenAIOrchestrator(openai_client=openai_client)
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception:  # pragma: no cover - defensive
         logger.exception("Failed to initialize services")
-        raise HTTPException(status_code=500, detail="Service initialization failed")
+        raise HTTPException(status_code=500, detail="Service initialization failed") from None
 
     total_variants = 0
     total_reused = 0
@@ -166,7 +169,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
 
 
 # -----------------------
-# Background job handling
+# Background job handling (Celery + Redis)
 # -----------------------
 
 class JobCreateResponse(BaseModel):
@@ -186,129 +189,42 @@ class JobStatusResponse(BaseModel):
     results: List[VariantResult] | None = None
 
 
-_JOB_STORE: Dict[str, Dict[str, Any]] = {}
-
-
 @app.post("/campaigns/jobs", response_model=JobCreateResponse, status_code=202, dependencies=[Depends(require_api_key)])
-async def create_job(brief: CampaignBrief, background_tasks: BackgroundTasks) -> JobCreateResponse:
-    job_id = str(uuid.uuid4())
-    _JOB_STORE[job_id] = {
-        "status": "pending",
-        "campaign_id": brief.campaign_id,
-        "started_at": None,
-        "finished_at": None,
-        "total_variants": None,
-        "assets_reused": None,
-        "new_generations": None,
-    }
-
-    # Schedule background execution
-    background_tasks.add_task(_run_job, job_id, brief.model_dump())
-
-    return JobCreateResponse(job_id=job_id, status="pending")
+async def create_job(brief: CampaignBrief) -> JobCreateResponse:
+    task = process_campaign_task.delay(brief.model_dump())
+    return JobCreateResponse(job_id=task.id, status="pending")
 
 
 @app.get("/campaigns/jobs/{job_id}", response_model=JobStatusResponse, dependencies=[Depends(require_api_key)])
 async def get_job(job_id: str) -> JobStatusResponse:
-    job = _JOB_STORE.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    result = celery_app.AsyncResult(job_id)
+    state_map = {
+        "PENDING": "pending",
+        "STARTED": "running",
+        "RETRY": "retry",
+        "FAILURE": "failed",
+        "SUCCESS": "succeeded",
+    }
+    status = state_map.get(result.state, result.state.lower())
+
+    payload = result.result if result.ready() and result.successful() else None
+    finished = None
+    try:
+        finished = result.date_done.isoformat() if getattr(result, "date_done", None) else None
+    except Exception:
+        finished = None
+
     return JobStatusResponse(
         job_id=job_id,
-        status=job.get("status", "unknown"),
-        campaign_id=job.get("campaign_id"),
-        total_variants=job.get("total_variants"),
-        assets_reused=job.get("assets_reused"),
-        new_generations=job.get("new_generations"),
-        started_at=job.get("started_at"),
-        finished_at=job.get("finished_at"),
-        results=job.get("results"),
+        status=status,
+        campaign_id=(payload or {}).get("campaign_id") if payload else None,
+        total_variants=(payload or {}).get("total_variants") if payload else None,
+        assets_reused=(payload or {}).get("assets_reused") if payload else None,
+        new_generations=(payload or {}).get("new_generations") if payload else None,
+        started_at=None,
+        finished_at=finished,
+        results=(payload or {}).get("results") if payload else None,
     )
-
-
-async def _run_job(job_id: str, brief_dict: Dict[str, Any]) -> None:
-    job = _JOB_STORE[job_id]
-    job["status"] = "running"
-    job["started_at"] = datetime.now(timezone.utc).isoformat()
-
-    # Reconstruct brief
-    brief = CampaignBrief(**brief_dict)
-
-    # Initialize services
-    try:
-        if not settings.OPENAI_API_KEY:
-            raise RuntimeError("OPENAI_API_KEY not configured")
-
-        openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
-        orchestrator = GenAIOrchestrator(openai_client=openai_client)
-        processor = ImageProcessor()
-        storage = StorageManager(base_path=Path("outputs"))
-    except Exception as exc:
-        logger.error("Job %s initialization failed: %s", job_id, exc)
-        job["status"] = "failed"
-        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-        return
-
-    total_variants = 0
-    total_reused = 0
-    job_results: List[VariantResult] = []
-
-    async def _run_for_product(product):
-        nonlocal total_variants, total_reused, job_results
-        ratios = list(ASPECT_RATIOS)
-        tasks = [
-            _generate_variant(
-                orchestrator=orchestrator,
-                processor=processor,
-                storage=storage,
-                product=product,
-                brief=brief,
-                ratio=ratio,
-            )
-            for ratio in ratios
-        ]
-        results_list = await asyncio.gather(*tasks, return_exceptions=True)
-        for ratio, result in zip(ratios, results_list):
-            if isinstance(result, Exception):
-                logger.error("Job %s: variant failed for product %s: %s", job_id, product.id, result)
-                job_results.append(
-                    VariantResult(
-                        product_id=product.id,
-                        ratio=ratio.name,
-                        path="",
-                        reused=False,
-                        success=False,
-                        error=str(result),
-                    )
-                )
-            else:
-                total_variants += 1
-                if result.get("reused"):
-                    total_reused += 1
-                job_results.append(
-                    VariantResult(
-                        product_id=product.id,
-                        ratio=ratio.name,
-                        path=result.get("path", ""),
-                        reused=bool(result.get("reused")),
-                        success=True,
-                    )
-                )
-
-    try:
-        await asyncio.gather(*[_run_for_product(product) for product in brief.products])
-        job["status"] = "succeeded"
-    except Exception as exc:  # pragma: no cover
-        logger.error("Job %s failed: %s", job_id, exc)
-        job["status"] = "failed"
-    finally:
-        await openai_client.close()
-        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-        job["campaign_id"] = brief.campaign_id
-        job["total_variants"] = total_variants
-        job["assets_reused"] = total_reused
-        job["new_generations"] = total_variants - total_reused
-        job["results"] = [r.model_dump() for r in job_results]
 
 
 # Internal helpers (duplicated lightly to avoid importing CLI module in API layer)

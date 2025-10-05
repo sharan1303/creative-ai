@@ -16,3 +16,19 @@ services:
     ports:
       - "8000:8000"
 
+  redis:
+    image: redis:7-alpine
+    container_name: creative-ai-redis
+    ports:
+      - "6379:6379"
+
+  worker:
+    build: .
+    container_name: creative-ai-worker
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    working_dir: /app
+    command: ["celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel", "INFO"]
+

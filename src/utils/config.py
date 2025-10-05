@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     RETRY_MAX_ATTEMPTS: int = 3  # Retry failed API calls
     RETRY_BACKOFF_FACTOR: float = 2.0  # Exponential backoff multiplier
 
+    # Celery / Redis
+    REDIS_URL: str = "redis://redis:6379/0"
+    CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
+
     # Logging
     LOG_LEVEL: str = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
 
