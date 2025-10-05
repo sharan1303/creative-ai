@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
@@ -55,12 +55,29 @@ class CampaignProcessResponse(BaseModel):
     results: List[VariantResult] = Field(default_factory=list)
 
 
+# -----------------------
+# Simple API key auth
+# -----------------------
+
+API_KEY_HEADER_NAME = "X-API-Key"
+
+
+def require_api_key(x_api_key: str | None = Header(default=None, alias=API_KEY_HEADER_NAME)) -> None:
+    expected = settings.OPENAI_API_KEY or ""
+    if not expected:
+        # If not configured, leave open but warn
+        logger.warning("API key not configured; skipping auth")
+        return
+    if not x_api_key or x_api_key != expected:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/campaigns/process", response_model=CampaignProcessResponse)
+@app.post("/campaigns/process", response_model=CampaignProcessResponse, dependencies=[Depends(require_api_key)])
 async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     """Process a campaign brief and generate creative assets.
 
@@ -175,7 +192,7 @@ class JobStatusResponse(BaseModel):
 _JOB_STORE: Dict[str, Dict[str, Any]] = {}
 
 
-@app.post("/campaigns/jobs", response_model=JobCreateResponse, status_code=202)
+@app.post("/campaigns/jobs", response_model=JobCreateResponse, status_code=202, dependencies=[Depends(require_api_key)])
 async def create_job(brief: CampaignBrief, background_tasks: BackgroundTasks) -> JobCreateResponse:
     job_id = str(uuid.uuid4())
     _JOB_STORE[job_id] = {
@@ -194,7 +211,7 @@ async def create_job(brief: CampaignBrief, background_tasks: BackgroundTasks) ->
     return JobCreateResponse(job_id=job_id, status="pending")
 
 
-@app.get("/campaigns/jobs/{job_id}", response_model=JobStatusResponse)
+@app.get("/campaigns/jobs/{job_id}", response_model=JobStatusResponse, dependencies=[Depends(require_api_key)])
 async def get_job(job_id: str) -> JobStatusResponse:
     job = _JOB_STORE.get(job_id)
     if not job:
