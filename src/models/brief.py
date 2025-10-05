@@ -30,7 +30,7 @@ class CampaignBrief(BaseModel):
 
     campaign_id: str = Field(..., description="Unique campaign identifier")
     products: List[Product] = Field(
-        ..., min_length=2, description="At least 2 products required"
+        ..., min_length=1, description="At least 1 product required"
     )
     target_market: str = Field(
         ..., description="Target region/market (e.g., 'EU', 'US-West')"
@@ -47,9 +47,9 @@ class CampaignBrief(BaseModel):
     @field_validator("products")
     @classmethod
     def validate_product_count(cls, v: List[Product]) -> List[Product]:
-        """Ensure at least 2 products are provided"""
-        if len(v) < 2:
-            raise ValueError("At least 2 products required per campaign brief")
+        """Ensure at least 1 product is provided"""
+        if len(v) < 1:
+            raise ValueError("At least 1 product required per campaign brief")
         return v
 
     @field_validator("campaign_message")

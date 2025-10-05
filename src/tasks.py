@@ -20,8 +20,8 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-@celery_app.task(bind=True, name="process_campaign_task")
-def process_campaign_task(self, brief_dict: Dict[str, Any]) -> Dict[str, Any]:
+@celery_app.task(name="process_campaign_task")
+def process_campaign_task(brief_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Run campaign processing synchronously in a worker thread.
 
     Note: Celery tasks are sync. We run async parts via asyncio.run.
@@ -145,4 +145,4 @@ async def _generate_variant(
     return {"success": True, "ratio": ratio.name, "path": str(output_path), "reused": reused}
 
 
-from src.cli import build_generation_prompt  # late import to avoid cycles
+from src.services.variant_generation import build_generation_prompt  # late import to avoid cycles

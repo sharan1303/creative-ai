@@ -11,10 +11,10 @@ This project exposes image generation via FastAPI and ships with Docker Compose 
 
 Create a `.env` file in the project root with at least:
 
-```bash
+```dotenv
 OPENAI_API_KEY=sk-...
 # Optional but recommended for API auth
-API_AUTH_TOKEN=dev-token-123
+API_AUTH_TOKEN=<your-api-token>
 ```
 
 Notes:

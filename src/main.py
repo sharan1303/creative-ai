@@ -7,22 +7,23 @@ reuse the existing pipeline services.
 from __future__ import annotations
 
 import asyncio
+import secrets
 from pathlib import Path
 from typing import Any, Dict, List
-import secrets
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from src.celery_app import celery_app
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
 from src.services.genai import GenAIOrchestrator
 from src.services.openai_image_client import OpenAIImageClient
 from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
+from src.services.variant_generation import generate_variant
+from src.tasks import process_campaign_task
 from src.utils.config import settings
 from src.utils.logger import get_logger
-from src.celery_app import celery_app
-from src.tasks import process_campaign_task
 
 logger = get_logger(__name__)
 
@@ -63,7 +64,9 @@ class CampaignProcessResponse(BaseModel):
 API_KEY_HEADER_NAME = "X-API-Key"
 
 
-def require_api_key(x_api_key: str | None = Header(default=None, alias=API_KEY_HEADER_NAME)) -> None:
+def require_api_key(
+    x_api_key: str | None = Header(default=None, alias=API_KEY_HEADER_NAME),
+) -> None:
     expected = settings.API_AUTH_TOKEN or ""
     if not expected:
         # If not configured, leave open but warn
@@ -78,7 +81,11 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/campaigns/process", response_model=CampaignProcessResponse, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/campaigns/process",
+    response_model=CampaignProcessResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     """Process a campaign brief and generate creative assets.
 
@@ -95,9 +102,11 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         orchestrator = GenAIOrchestrator(openai_client=openai_client)
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
-    except Exception:  # pragma: no cover - defensive
-        logger.exception("Failed to initialize services")
-        raise HTTPException(status_code=500, detail="Service initialization failed") from None
+    except Exception as e:  # pragma: no cover - defensive
+        logger.exception("Failed to initialize services", e)
+        raise HTTPException(
+            status_code=500, detail="Service initialization failed"
+        ) from e
 
     total_variants = 0
     total_reused = 0
@@ -170,6 +179,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
 # Background job handling (Celery + Redis)
 # -----------------------
 
+
 class JobCreateResponse(BaseModel):
     job_id: str
     status: str
@@ -187,13 +197,22 @@ class JobStatusResponse(BaseModel):
     results: List[VariantResult] | None = None
 
 
-@app.post("/campaigns/jobs", response_model=JobCreateResponse, status_code=202, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/campaigns/jobs",
+    response_model=JobCreateResponse,
+    status_code=202,
+    dependencies=[Depends(require_api_key)],
+)
 async def create_job(brief: CampaignBrief) -> JobCreateResponse:
     task = process_campaign_task.delay(brief.model_dump())
     return JobCreateResponse(job_id=task.id, status="pending")
 
 
-@app.get("/campaigns/jobs/{job_id}", response_model=JobStatusResponse, dependencies=[Depends(require_api_key)])
+@app.get(
+    "/campaigns/jobs/{job_id}",
+    response_model=JobStatusResponse,
+    dependencies=[Depends(require_api_key)],
+)
 async def get_job(job_id: str) -> JobStatusResponse:
     result = celery_app.AsyncResult(job_id)
     state_map = {
@@ -208,8 +227,11 @@ async def get_job(job_id: str) -> JobStatusResponse:
     payload = result.result if result.ready() and result.successful() else None
     finished = None
     try:
-        finished = result.date_done.isoformat() if getattr(result, "date_done", None) else None
-    except Exception:
+        finished = (
+            result.date_done.isoformat() if getattr(result, "date_done", None) else None
+        )
+    except Exception as e:
+        logger.debug("Could not retrieve date_done for job %s: %s", job_id, e)
         finished = None
 
     return JobStatusResponse(
@@ -225,67 +247,20 @@ async def get_job(job_id: str) -> JobStatusResponse:
     )
 
 
-# Internal helpers (duplicated lightly to avoid importing CLI module in API layer)
-from src.cli import build_generation_prompt  # noqa: E402  (import after FastAPI app)
-from src.models.brief import AspectRatio, Product  # noqa: E402
-
-
 async def _generate_variant(
     orchestrator: GenAIOrchestrator,
     processor: ImageProcessor,
     storage: StorageManager,
-    product: Product,
-    brief: CampaignBrief,
-    ratio: AspectRatio,
+    product,
+    brief,
+    ratio,
 ) -> Dict[str, Any]:
-    """Generate and post-process a single variant, then save output."""
-    reused = False
-
-    # Step 1: Reuse if available
-    existing_asset = await asyncio.to_thread(
-        storage.get_asset, product.id, ratio.name, brief.campaign_id
+    return await generate_variant(
+        orchestrator=orchestrator,
+        processor=processor,
+        storage=storage,
+        product=product,
+        brief=brief,
+        ratio=ratio,
+        offload_blocking=True,
     )
-    if existing_asset:
-        image_data = existing_asset
-        reused = True
-    else:
-        # Step 2: Generate
-        prompt = build_generation_prompt(product, brief)
-        image_data = await orchestrator.generate_image(
-            prompt=prompt,
-            width=ratio.width,
-            height=ratio.height,
-            product_id=product.id,
-        )
-        # Step 3: Resize to exact target
-        image_data = await asyncio.to_thread(
-            processor.resize, image_data, ratio.width, ratio.height
-        )
-
-    # Step 4: Add text overlay
-    image_data = await asyncio.to_thread(
-        processor.add_text_overlay, image_data, brief.campaign_message, "bottom"
-    )
-
-    # Step 5: Save
-    output_path = await asyncio.to_thread(
-        storage.save_output,
-        product.id,
-        ratio.name,
-        image_data,
-        {
-            "campaign_id": brief.campaign_id,
-            "product_id": product.id,
-            "product_name": product.name,
-            "aspect_ratio": ratio.name,
-            "dimensions": f"{ratio.width}x{ratio.height}",
-            "platform": ratio.platform,
-            "target_market": brief.target_market,
-            "target_audience": brief.target_audience,
-            "campaign_message": brief.campaign_message,
-            "reused": reused,
-        },
-        campaign_id=brief.campaign_id,
-    )
-
-    return {"success": True, "ratio": ratio.name, "path": str(output_path), "reused": reused}

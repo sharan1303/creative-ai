@@ -2,20 +2,15 @@
   "campaign_id": "winter-warmth-uk-2025",
   "products": [
     {
-      "id": "prod_wool_sweater_001",
-      "name": "Merino Wool Sweater",
-      "description": "Premium merino wool crew neck sweater in classic navy"
-    },
-    {
       "id": "prod_thermal_socks_002",
       "name": "Thermal Hiking Socks",
       "description": "Heavy-duty thermal socks with moisture-wicking technology"
     }
   ],
-  "target_market": "UK-Northeast",
+  "target_market": "UK-West",
   "target_audience": "Outdoor enthusiasts aged 30-55",
   "campaign_message": "Stay Warm, Stay Active",
   "brand_colors": ["#1E3A8A", "#F59E0B", "#F3F4F6"],
-  "locale": "it"
+  "locale": "en"
 }
 
