@@ -63,7 +63,7 @@ API_KEY_HEADER_NAME = "X-API-Key"
 
 
 def require_api_key(x_api_key: str | None = Header(default=None, alias=API_KEY_HEADER_NAME)) -> None:
-    expected = settings.OPENAI_API_KEY or ""
+    expected = settings.API_AUTH_TOKEN or ""
     if not expected:
         # If not configured, leave open but warn
         logger.warning("API key not configured; skipping auth")
@@ -88,13 +88,14 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         raise HTTPException(status_code=400, detail="OPENAI_API_KEY not configured")
 
     # Initialize services
+    openai_client: OpenAIImageClient | None = None
     try:
         openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
         orchestrator = GenAIOrchestrator(openai_client=openai_client)
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
     except Exception as exc:  # pragma: no cover - defensive
-        logger.error("Failed to initialize services: %s", exc)
+        logger.exception("Failed to initialize services")
         raise HTTPException(status_code=500, detail="Service initialization failed")
 
     total_variants = 0
@@ -102,7 +103,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     results: List[VariantResult] = []
 
     # Build tasks across all products/ratios
-    async def _run_for_product(product_idx: int, total_products: int, product):
+    async def _run_for_product(product):
         nonlocal total_variants, total_reused, results
         tasks = []
         ratios = list(ASPECT_RATIOS)
@@ -150,14 +151,10 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
                 )
 
     try:
-        await asyncio.gather(
-            *[
-                _run_for_product(idx + 1, len(brief.products), product)
-                for idx, product in enumerate(brief.products)
-            ]
-        )
+        await asyncio.gather(*[_run_for_product(product) for product in brief.products])
     finally:
-        await openai_client.close()
+        if openai_client is not None:
+            await openai_client.close()
 
     return CampaignProcessResponse(
         campaign_id=brief.campaign_id,
@@ -331,8 +328,8 @@ async def _generate_variant(
     reused = False
 
     # Step 1: Reuse if available
-    existing_asset = storage.get_asset(
-        product_id=product.id, ratio_name=ratio.name, campaign_id=brief.campaign_id
+    existing_asset = await asyncio.to_thread(
+        storage.get_asset, product.id, ratio.name, brief.campaign_id
     )
     if existing_asset:
         image_data = existing_asset
@@ -347,20 +344,22 @@ async def _generate_variant(
             product_id=product.id,
         )
         # Step 3: Resize to exact target
-        image_data = processor.resize(image_data, ratio.width, ratio.height)
+        image_data = await asyncio.to_thread(
+            processor.resize, image_data, ratio.width, ratio.height
+        )
 
     # Step 4: Add text overlay
-    image_data = processor.add_text_overlay(
-        image_data=image_data, text=brief.campaign_message, position="bottom"
+    image_data = await asyncio.to_thread(
+        processor.add_text_overlay, image_data, brief.campaign_message, "bottom"
     )
 
     # Step 5: Save
-    output_path = storage.save_output(
-        product_id=product.id,
-        ratio_name=ratio.name,
-        image_data=image_data,
-        campaign_id=brief.campaign_id,
-        metadata={
+    output_path = await asyncio.to_thread(
+        storage.save_output,
+        product.id,
+        ratio.name,
+        image_data,
+        {
             "campaign_id": brief.campaign_id,
             "product_id": product.id,
             "product_name": product.name,
@@ -372,6 +371,7 @@ async def _generate_variant(
             "campaign_message": brief.campaign_message,
             "reused": reused,
         },
+        campaign_id=brief.campaign_id,
     )
 
     return {"success": True, "ratio": ratio.name, "path": str(output_path), "reused": reused}

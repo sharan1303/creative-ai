@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""  # Primary provider
     HUGGINGFACE_TOKEN: Optional[str] = None  # Free fallback
 
+    # API authentication for our FastAPI service (do NOT reuse provider keys)
+    API_AUTH_TOKEN: Optional[str] = None
+
     # Google Cloud (optional provider)
     GOOGLE_PROJECT_ID: Optional[str] = None
     GOOGLE_LOCATION: Optional[str] = "us-central1"
