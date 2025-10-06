@@ -14,7 +14,7 @@ from src.services.genai import GenAIOrchestrator
 from src.services.openai_image_client import OpenAIImageClient
 from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
-from src.services.variant_generation import build_generation_prompt
+from src.services.variant_generation import generate_variant
 from src.utils.config import settings
 from src.utils.logger import get_logger
 
@@ -106,61 +106,12 @@ async def _generate_variant(
     brief: CampaignBrief,
     ratio,
 ) -> Dict[str, Any]:
-    # Check for existing asset (cache hit)
-    existing_path = await asyncio.to_thread(
-        storage.get_asset, product.id, ratio.name, brief.campaign_id
+    return await generate_variant(
+        orchestrator=orchestrator,
+        processor=processor,
+        storage=storage,
+        product=product,
+        brief=brief,
+        ratio=ratio,
+        offload_blocking=True,
     )
-
-    # If asset exists, return immediately without reprocessing
-    if existing_path is not None:
-        logger.info(
-            f"Cache hit for {product.id}/{ratio.name}, skipping generation and overlay"
-        )
-        return {
-            "success": True,
-            "ratio": ratio.name,
-            "path": str(existing_path),
-            "reused": True,
-        }
-
-    # Generate new image
-    prompt = build_generation_prompt(product, brief)
-    image_data = await orchestrator.generate_image(
-        prompt=prompt, width=ratio.width, height=ratio.height, product_id=product.id
-    )
-    image_data = await asyncio.to_thread(
-        processor.resize, image_data, ratio.width, ratio.height
-    )
-
-    # Add text overlay (only for new generations)
-    image_data = await asyncio.to_thread(
-        processor.add_text_overlay, image_data, brief.campaign_message, "bottom"
-    )
-
-    # Save output (only for new generations)
-    output_path = await asyncio.to_thread(
-        storage.save_output,
-        product.id,
-        ratio.name,
-        image_data,
-        {
-            "campaign_id": brief.campaign_id,
-            "product_id": product.id,
-            "product_name": product.name,
-            "aspect_ratio": ratio.name,
-            "dimensions": f"{ratio.width}x{ratio.height}",
-            "platform": ratio.platform,
-            "target_market": brief.target_market,
-            "target_audience": brief.target_audience,
-            "campaign_message": brief.campaign_message,
-            "reused": False,
-        },
-        campaign_id=brief.campaign_id,
-    )
-
-    return {
-        "success": True,
-        "ratio": ratio.name,
-        "path": str(output_path),
-        "reused": False,
-    }

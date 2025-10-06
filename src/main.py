@@ -103,9 +103,9 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
     except Exception as e:  # pragma: no cover - defensive
-        logger.exception("Failed to initialize services", e)
+        logger.exception("Failed to initialise services")
         raise HTTPException(
-            status_code=500, detail="Service initialization failed"
+            status_code=500, detail="Service initialisation failed"
         ) from e
 
     total_variants = 0
