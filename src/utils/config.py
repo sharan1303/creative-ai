@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str = ""  # Primary provider
     HUGGINGFACE_TOKEN: Optional[str] = None  # Free fallback
 
+    # API authentication for our FastAPI service (do NOT reuse provider keys)
+    API_AUTH_TOKEN: Optional[str] = None
+
     # Google Cloud (optional provider)
     GOOGLE_PROJECT_ID: Optional[str] = None
     GOOGLE_LOCATION: Optional[str] = "us-central1"
@@ -33,6 +36,11 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_GENERATIONS: int = 3  # Limit concurrent GenAI calls
     RETRY_MAX_ATTEMPTS: int = 3  # Retry failed API calls
     RETRY_BACKOFF_FACTOR: float = 2.0  # Exponential backoff multiplier
+
+    # Celery / Redis
+    REDIS_URL: str = "redis://redis:6379/0"
+    CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
 
     # Logging
     LOG_LEVEL: str = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR

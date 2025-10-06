@@ -11,9 +11,28 @@ services:
       - ./outputs:/app/outputs
       - ./assets:/app/assets
     working_dir: /app
-    command: ["python", "-m", "src.cli", "--brief", "examples/brief_single_product.json"]
-    # If you later add FastAPI with uvicorn, replace command accordingly
-    # command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Run FastAPI app with uvicorn
+    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]
     ports:
       - "8000:8000"
+
+  redis:
+    image: redis:7-alpine
+    container_name: creative-ai-redis
+    ports:
+      - "6379:6379"
+
+  worker:
+    build: .
+    container_name: creative-ai-worker
+    volumes:
+      - ./:/app
+      - ./outputs:/app/outputs
+      - ./assets:/app/assets
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    working_dir: /app
+    command: ["celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel", "INFO"]
 

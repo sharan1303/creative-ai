@@ -36,7 +36,9 @@ class StorageManager:
         self.base_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"Storage Manager initialized at {self.base_path}")
 
-    def get_asset(self, product_id: str, ratio_name: str, campaign_id: Optional[str] = None) -> Optional[bytes]:
+    def get_asset(
+        self, product_id: str, ratio_name: str, campaign_id: Optional[str] = None
+    ) -> Optional[Path]:
         """Check if asset already exists and retrieve it
 
         Enables asset reuse to avoid redundant generation costs.
@@ -47,7 +49,7 @@ class StorageManager:
             campaign_id: Optional campaign ID for scoped search
 
         Returns:
-            Asset bytes if found, None otherwise
+            Path to existing asset if found, None otherwise.
         """
         # Build search path
         if campaign_id:
@@ -64,7 +66,7 @@ class StorageManager:
         if png_files:
             asset_path = png_files[0]  # Use first match
             logger.info(f"Reusing existing asset: {asset_path}")
-            return asset_path.read_bytes()
+            return asset_path
 
         return None
 
