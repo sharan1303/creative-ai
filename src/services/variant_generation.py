@@ -82,41 +82,47 @@ async def generate_variant(
     Returns:
         Dictionary with generation result metadata
     """
-    reused = False
-
-    # Step 1: Reuse if available
+    # Step 1: Check for existing asset (cache hit)
     if offload_blocking:
-        existing_asset = await asyncio.to_thread(
+        existing_path = await asyncio.to_thread(
             storage.get_asset, product.id, ratio.name, brief.campaign_id
         )
     else:
-        existing_asset = storage.get_asset(
+        existing_path = storage.get_asset(
             product_id=product.id, ratio_name=ratio.name, campaign_id=brief.campaign_id
         )
 
-    if existing_asset:
-        image_data = existing_asset
-        reused = True
-    else:
-        # Step 2: Generate
-        prompt = build_generation_prompt(product, brief)
-        logger.debug(f"Prompt for {product.id}: {prompt[:100]}...")
-        image_data = await orchestrator.generate_image(
-            prompt=prompt,
-            width=ratio.width,
-            height=ratio.height,
-            product_id=product.id,
+    # If asset exists, return immediately without reprocessing
+    if existing_path is not None:
+        logger.info(
+            f"Cache hit for {product.id}/{ratio.name}, skipping generation and overlay"
         )
+        return {
+            "success": True,
+            "ratio": ratio.name,
+            "path": str(existing_path),
+            "reused": True,
+        }
 
-        # Step 3: Resize to exact target
-        if offload_blocking:
-            image_data = await asyncio.to_thread(
-                processor.resize, image_data, ratio.width, ratio.height
-            )
-        else:
-            image_data = processor.resize(image_data, ratio.width, ratio.height)
+    # Step 2: Generate new image
+    prompt = build_generation_prompt(product, brief)
+    logger.debug(f"Prompt for {product.id}: {prompt[:100]}...")
+    image_data = await orchestrator.generate_image(
+        prompt=prompt,
+        width=ratio.width,
+        height=ratio.height,
+        product_id=product.id,
+    )
 
-    # Step 4: Add text overlay (always applied)
+    # Step 3: Resize to exact target
+    if offload_blocking:
+        image_data = await asyncio.to_thread(
+            processor.resize, image_data, ratio.width, ratio.height
+        )
+    else:
+        image_data = processor.resize(image_data, ratio.width, ratio.height)
+
+    # Step 4: Add text overlay (only for new generations)
     if offload_blocking:
         image_data = await asyncio.to_thread(
             processor.add_text_overlay, image_data, brief.campaign_message, "bottom"
@@ -126,7 +132,7 @@ async def generate_variant(
             image_data=image_data, text=brief.campaign_message, position="bottom"
         )
 
-    # Step 5: Save output
+    # Step 5: Save output (only for new generations)
     if offload_blocking:
         output_path = await asyncio.to_thread(
             storage.save_output,
@@ -143,7 +149,7 @@ async def generate_variant(
                 "target_market": brief.target_market,
                 "target_audience": brief.target_audience,
                 "campaign_message": brief.campaign_message,
-                "reused": reused,
+                "reused": False,
             },
             brief.campaign_id,
         )
@@ -163,7 +169,7 @@ async def generate_variant(
                 "target_market": brief.target_market,
                 "target_audience": brief.target_audience,
                 "campaign_message": brief.campaign_message,
-                "reused": reused,
+                "reused": False,
             },
         )
 
@@ -171,5 +177,5 @@ async def generate_variant(
         "success": True,
         "ratio": ratio.name,
         "path": str(output_path),
-        "reused": reused,
+        "reused": False,
     }
