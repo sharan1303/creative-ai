@@ -24,9 +24,9 @@ examples/            # Sample campaign briefs
 outputs/             # Generated assets (organized)
 ```
 
-## Running pipeline
+## Running the Pipeline
 
-### Option 1: local using uv
+### Option 1: CLI (Local with uv)
 
 ```bash
 # Create and activate virtual environment
@@ -43,19 +43,39 @@ cp .env.example .env
 uv run -m src.cli --brief {brief.json}
 ```
 
-### Option 2: Docker
+### Option 2: FastAPI + Docker (Recommended)
+
+The project now exposes a full HTTP API with both **synchronous** and **asynchronous (queue-based)** processing modes.
 
 ```bash
 # Create .env file
 cp .env.example .env
-# Add OPENAI_API_KEY to .env (and optional provider settings)
+# Add OPENAI_API_KEY and API_AUTH_TOKEN to .env
 
-# Build and run (single product brief)
-docker compose up --build
+# Start the full stack (FastAPI + Redis + Celery worker)
+docker compose up -d --build
 
-# Run with specific brief
-docker compose run --rm app uv run -m src.cli --brief examples/brief_multi_product.json
+# Health check
+curl http://localhost:8000/health
+
+# Synchronous processing (blocks until complete)
+curl -X POST http://localhost:8000/campaigns/process \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: dev-token-123" \
+  --data @examples/brief_multi_product.json
+
+# Asynchronous processing (returns job ID immediately)
+curl -X POST http://localhost:8000/campaigns/jobs \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: dev-token-123" \
+  --data @examples/brief_multi_product.json
+
+# Poll job status
+curl http://localhost:8000/campaigns/jobs/{job_id} \
+  -H "X-API-Key: dev-token-123"
 ```
+
+See [docker-commands.md](docker-commands.md) for PowerShell examples and detailed usage.
 
 ---
 
@@ -101,6 +121,291 @@ outputs/
     │       └── metadata.json
     └── {product_id}/
         └── ... (similar structure)
+```
+
+---
+
+## Architecture
+
+### Execution Modes
+
+The pipeline supports three execution modes:
+
+| Mode | Entry Point | Use Case | Response Time | Scalability |
+|------|-------------|----------|---------------|-------------|
+| **CLI** | `src.cli` | Local development, testing | Synchronous | Single machine |
+| **FastAPI Sync** | `POST /campaigns/process` | Low-latency API calls | Blocks until complete | Horizontal (multi-instance) |
+| **FastAPI Async** | `POST /campaigns/jobs` | High-volume batch processing | Immediate (202) | Horizontal + worker scaling |
+
+### API Endpoints
+
+| Endpoint | Method | Auth | Description | Response |
+|----------|--------|------|-------------|----------|
+| `/health` | GET | No | Service health check | `{"status": "ok"}` |
+| `/campaigns/process` | POST | Yes | Synchronous campaign processing | Full results with asset paths |
+| `/campaigns/jobs` | POST | Yes | Submit async job to queue | Job ID (202 Accepted) |
+| `/campaigns/jobs/{job_id}` | GET | Yes | Poll job status | Status + results when complete |
+
+**Authentication**: All protected endpoints require `X-API-Key` header matching `API_AUTH_TOKEN` from `.env`.
+
+### System Overview
+
+The Creative Automation Pipeline is built on a microservices architecture with FastAPI, Redis queue, and Celery workers.
+
+```mermaid
+flowchart TB
+    subgraph Client["Client Layer"]
+        CLI[CLI Tool]
+        HTTP[HTTP Client]
+    end
+    
+    subgraph API["API Gateway Layer"]
+        FastAPI[FastAPI Service<br/>Port 8000]
+        Auth[API Key Auth<br/>Middleware]
+    end
+    
+    subgraph Queue["Task Queue Layer"]
+        Redis[(Redis<br/>Message Broker)]
+        Celery[Celery Workers<br/>Background Jobs]
+    end
+    
+    subgraph Services["Business Logic Layer"]
+        Orchestrator[GenAI Orchestrator]
+        OpenAI[OpenAI Client<br/>DALL-E 3]
+        Processor[Image Processor<br/>Pillow]
+        Storage[Storage Manager<br/>File System]
+    end
+    
+    subgraph External["External Services"]
+        OpenAIAPI[OpenAI API<br/>dall-e-3]
+        FileSystem[outputs/<br/>campaign/product/ratio/]
+    end
+    
+    CLI --> FastAPI
+    HTTP --> FastAPI
+    FastAPI --> Auth
+    Auth --> |sync| Orchestrator
+    Auth --> |async| Redis
+    Redis --> Celery
+    Celery --> Orchestrator
+    
+    Orchestrator --> OpenAI
+    Orchestrator --> Processor
+    Orchestrator --> Storage
+    
+    OpenAI --> OpenAIAPI
+    Processor --> Storage
+    Storage --> FileSystem
+    
+    style FastAPI fill:#4A90E2
+    style Redis fill:#DC382D
+    style Celery fill:#37814A
+    style OpenAI fill:#10A37F
+    style FileSystem fill:#FFB84D
+```
+
+### Synchronous Processing Flow
+
+When using the `/campaigns/process` endpoint, the request blocks until all assets are generated:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant FastAPI as FastAPI<br/>(src.main)
+    participant Auth as API Auth<br/>Guard
+    participant Storage as Storage<br/>Manager
+    participant Orch as GenAI<br/>Orchestrator
+    participant OpenAI as OpenAI<br/>Client
+    participant Proc as Image<br/>Processor
+    participant FS as File<br/>System
+
+    rect rgba(220,240,255,0.35)
+    Note over Client,FS: Synchronous Campaign Processing
+    
+    Client->>FastAPI: POST /campaigns/process<br/>(CampaignBrief JSON)
+    FastAPI->>Auth: Validate X-API-Key header
+    
+    alt API key invalid
+        Auth-->>Client: 401 Unauthorized
+    else API key valid
+        Auth->>FastAPI: ✓ Authorized
+        
+        loop For each product × aspect ratio
+            FastAPI->>Storage: get_asset(product_id, ratio)
+            
+            alt Asset exists (reuse)
+                Storage-->>FastAPI: Return existing asset path
+                Note over FastAPI: Skip generation ✓
+            else Asset missing (generate)
+                FastAPI->>Orch: generate_image(prompt, width, height)
+                Orch->>OpenAI: Call DALL-E 3 API
+                OpenAI-->>Orch: Image bytes
+                Orch-->>FastAPI: Image data
+                
+                FastAPI->>Proc: resize(image, target_width, height)
+                Proc-->>FastAPI: Resized image
+                
+                FastAPI->>Proc: add_text_overlay(image, message)
+                Proc-->>FastAPI: Final image with text
+                
+                FastAPI->>Storage: save_output(product_id, ratio, image, metadata)
+                Storage->>FS: Write PNG + metadata.json
+                FS-->>Storage: File path
+                Storage-->>FastAPI: Asset path
+            end
+        end
+        
+        FastAPI-->>Client: CampaignProcessResponse<br/>(total_variants, assets_reused, results)
+    end
+    end
+```
+
+### Asynchronous Processing Flow (Queue-Based)
+
+When using the `/campaigns/jobs` endpoint, the request returns immediately with a job ID. Processing happens in the background:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant FastAPI as FastAPI<br/>(src.main)
+    participant Auth as API Auth<br/>Guard
+    participant Redis as Redis<br/>Queue
+    participant Celery as Celery<br/>Worker
+    participant Task as Campaign<br/>Task
+    participant Services as Pipeline<br/>Services
+
+    rect rgba(255,240,220,0.35)
+    Note over Client,Services: Asynchronous Job Submission
+    
+    Client->>FastAPI: POST /campaigns/jobs<br/>(CampaignBrief JSON)
+    FastAPI->>Auth: Validate X-API-Key header
+    
+    alt API key valid
+        Auth->>FastAPI: ✓ Authorized
+        FastAPI->>Redis: Enqueue task (brief data)
+        Redis-->>FastAPI: Job ID
+        FastAPI-->>Client: 202 Accepted<br/>{job_id, status: "pending"}
+        
+        Note over Client: Client can disconnect<br/>or poll status
+        
+        rect rgba(180,220,255,0.3)
+        Note over Redis,Services: Background Processing (async)
+        
+        Celery->>Redis: Poll for tasks
+        Redis-->>Celery: process_campaign_task
+        Celery->>Task: Execute task
+        Task->>Services: Run full pipeline<br/>(same as sync flow)
+        Services-->>Task: Results
+        Task->>Redis: Store result
+        end
+    else API key invalid
+        Auth-->>Client: 401 Unauthorized
+    end
+    end
+    
+    rect rgba(220,255,220,0.35)
+    Note over Client,Redis: Status Polling
+    
+    Client->>FastAPI: GET /campaigns/jobs/{job_id}
+    FastAPI->>Auth: Validate X-API-Key header
+    Auth->>FastAPI: ✓ Authorized
+    FastAPI->>Redis: Query job status
+    
+    alt Job completed
+        Redis-->>FastAPI: Result + metadata
+        FastAPI-->>Client: JobStatusResponse<br/>(status: "succeeded", results, counts)
+    else Job in progress
+        Redis-->>FastAPI: Status: "running"
+        FastAPI-->>Client: JobStatusResponse<br/>(status: "running")
+    else Job failed
+        Redis-->>FastAPI: Error info
+        FastAPI-->>Client: JobStatusResponse<br/>(status: "failed", error)
+    end
+    end
+```
+
+### Component Interaction
+
+```mermaid
+flowchart LR
+    subgraph Core["Core Pipeline Services"]
+        direction TB
+        A[GenAI Orchestrator]
+        B[OpenAI Image Client]
+        C[Image Processor]
+        D[Storage Manager]
+        E[Variant Generator]
+        
+        A --> B
+        A --> C
+        A --> D
+        E --> A
+        E --> C
+        E --> D
+    end
+    
+    subgraph Entry["Entry Points"]
+        direction TB
+        F[CLI cli.py]
+        G[FastAPI Sync<br/>/campaigns/process]
+        H[Celery Task<br/>process_campaign_task]
+    end
+    
+    subgraph Utils["Utilities"]
+        direction TB
+        I[Config Settings]
+        J[Logger]
+        K[Retry Logic]
+    end
+    
+    F --> Core
+    G --> Core
+    H --> Core
+    
+    Core --> Utils
+    
+    style Core fill:#E8F4F8
+    style Entry fill:#FFF4E6
+    style Utils fill:#F0F0F0
+```
+
+### Docker Compose Stack
+
+```mermaid
+flowchart TB
+    subgraph Docker["Docker Compose Services"]
+        direction TB
+        
+        subgraph App["app (FastAPI)"]
+            A1[uvicorn server<br/>Port 8000]
+            A2[REST API endpoints]
+            A3[Mounted volumes:<br/>outputs/, assets/]
+        end
+        
+        subgraph Worker["worker (Celery)"]
+            W1[Celery worker process]
+            W2[Task executor]
+            W3[Same volumes as app]
+        end
+        
+        subgraph Cache["redis (Redis)"]
+            R1[Message broker<br/>Port 6379]
+            R2[Result backend]
+        end
+        
+        App --> |Enqueue tasks| Cache
+        Worker --> |Poll tasks| Cache
+        Worker --> |Store results| Cache
+        App --> |Query results| Cache
+    end
+    
+    Client([Client<br/>curl/Postman]) --> |HTTP| App
+    
+    style App fill:#4A90E2,color:#fff
+    style Worker fill:#37814A,color:#fff
+    style Cache fill:#DC382D,color:#fff
 ```
 
 ---
@@ -225,6 +530,41 @@ tasks = [generate_variant(...) for ratio in ASPECT_RATIOS]
 results = await asyncio.gather(*tasks)
 ```
 
+### 7. FastAPI + Queue Architecture
+
+**Decision**: Implement both synchronous and asynchronous processing modes with FastAPI + Redis + Celery.
+
+**Rationale**:
+
+- **Flexibility**: Sync mode for real-time needs, async for batch processing
+- **Scalability**: Horizontal scaling of API instances and workers independently
+- **Reliability**: Queue-based processing with job status tracking
+- **Production-Ready**: Standard architecture pattern for microservices
+
+**Architecture Components**:
+
+```python
+# Synchronous endpoint (blocking)
+@app.post("/campaigns/process")
+async def process_campaign(brief: CampaignBrief):
+    # Execute pipeline immediately, return when complete
+    return CampaignProcessResponse(...)
+
+# Asynchronous endpoint (queue-based)
+@app.post("/campaigns/jobs")
+async def create_job(brief: CampaignBrief):
+    task = process_campaign_task.delay(brief.model_dump())
+    return JobCreateResponse(job_id=task.id, status="pending")
+```
+
+**Benefits**:
+
+- **Dual Mode**: Choose sync for low-latency or async for high-volume
+- **API Authentication**: Simple X-API-Key header-based auth
+- **Health Monitoring**: `/health` endpoint for load balancer checks
+- **Worker Scaling**: `docker compose up -d --scale worker=N`
+- **Result Persistence**: Redis stores job results for status polling
+
 ---
 
 ## Assumptions & Limitations
@@ -258,7 +598,7 @@ results = await asyncio.gather(*tasks)
 
 ---
 
-## 📊 Cost Analysis
+## Cost Analysis
 
 ### OpenAI API Pricing (DALL-E 3)
 
@@ -286,53 +626,120 @@ results = await asyncio.gather(*tasks)
 
 ---
 
-## 🚢 Deployment Considerations (Production)
+## Deployment Considerations
 
-### Recommended Architecture for Scale
+### Current Implementation (FastAPI + Docker)
 
-```text
-[API Gateway] → [Load Balancer]
-                      ↓
-      ┌───────────────┴───────────────┐
-      ↓                               ↓
-[FastAPI Service 1]         [FastAPI Service 2]
-      ↓                               ↓
-[Redis Queue] ← Job Manager → [Workers (Celery)]
-      ↓
-[GenAI APIs] + [Cloud Storage (S3/Azure Blob)]
-```
+The project now includes a production-ready FastAPI service with:
+
+- **API Server**: Uvicorn ASGI server with FastAPI framework
+- **Task Queue**: Redis message broker with Celery workers
+- **Authentication**: API key-based auth via `X-API-Key` header
+- **Containerization**: Docker Compose for orchestration
+- **Dual Processing Modes**:
+  - **Synchronous** (`/campaigns/process`): Blocking request/response
+  - **Asynchronous** (`/campaigns/jobs`): Queue-based background processing
+
+**Stack Components**:
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| **API Gateway** | FastAPI 0.104+ | REST endpoints, request validation |
+| **Message Broker** | Redis 7.x | Task queue, result backend |
+| **Worker Pool** | Celery 5.x | Background job execution |
+| **Web Server** | Uvicorn | ASGI server for FastAPI |
+| **Orchestration** | Docker Compose | Multi-container management |
+
+### Scaling for Production
 
 ```mermaid
 flowchart TD
+    subgraph External["External Layer"]
+        LB[Load Balancer<br/>NGINX/ALB]
+        CDN[CDN/Storage<br/>S3/Azure Blob]
+    end
 
-    %% Entry Points
-    A[API Gateway] --> B[Load Balancer]
+    subgraph API["API Layer (Scaled)"]
+        API1[FastAPI Instance 1]
+        API2[FastAPI Instance 2]
+        API3[FastAPI Instance N]
+    end
 
-    %% Load Balancer Routes
-    B --> C1[FastAPI Service 1]
-    B --> C2[FastAPI Service 2]
+    subgraph Queue["Queue Layer"]
+        Redis1[(Redis Primary)]
+        Redis2[(Redis Replica)]
+    end
 
-    %% Job Manager and Queue
-    C1 --> D[Redis Queue]
-    C2 --> F
-    D <-->|Submit/Fetch Jobs| E[Job Manager]
-    E --> F["Workers (Celery)"]
+    subgraph Workers["Worker Layer (Scaled)"]
+        W1[Celery Worker 1]
+        W2[Celery Worker 2]
+        W3[Celery Worker N]
+    end
 
-    %% External Integrations
-    D --> G["GenAI APIs"]
-    D --> H["Cloud Storage
-    (S3/Azure Blob)"]
+    subgraph Monitoring["Observability"]
+        Prom[Prometheus]
+        Graf[Grafana]
+        ELK[ELK Stack]
+    end
+
+    LB --> API1
+    LB --> API2
+    LB --> API3
+
+    API1 --> Redis1
+    API2 --> Redis1
+    API3 --> Redis1
+    Redis1 --> Redis2
+
+    Redis1 --> W1
+    Redis1 --> W2
+    Redis1 --> W3
+
+    W1 --> CDN
+    W2 --> CDN
+    W3 --> CDN
+
+    API1 --> Prom
+    W1 --> ELK
+
+    Prom --> Graf
+
+    style LB fill:#FF6B6B
+    style Redis1 fill:#DC382D,color:#fff
+    style CDN fill:#4ECDC4
+    style Prom fill:#95E1D3
 ```
 
-### Key Changes for Production
+### Production Enhancements Roadmap
 
-1. **Queue System**: Redis + Celery for async job processing
-2. **Cloud Storage**: S3/Azure Blob for multi-region access
-3. **Monitoring**: Prometheus + Grafana for metrics
-4. **Logging**: ELK stack for centralized logs
-5. **Authentication**: OAuth2 for API access
-6. **Rate Limiting**: Token bucket for API quotas
-7. **Database**: PostgreSQL for campaign/variant tracking
+1. **Queue System** ✅ (Implemented)
+   - Redis + Celery for async job processing
+   - Job status tracking and result retrieval
+
+2. **Cloud Storage** (Next)
+   - S3/Azure Blob for multi-region asset access
+   - Replace local filesystem storage
+
+3. **Monitoring** (Recommended)
+   - Prometheus + Grafana for metrics
+   - OpenTelemetry for distributed tracing
+   - Health check endpoints (✅ implemented: `/health`)
+
+4. **Logging** (Recommended)
+   - ELK stack or CloudWatch for centralized logs
+   - Structured JSON logging (✅ already implemented)
+
+5. **Authentication** (Recommended)
+   - OAuth2/JWT for production API access
+   - Basic API key auth (✅ implemented: `X-API-Key`)
+
+6. **Rate Limiting** (Recommended)
+   - Token bucket or sliding window
+   - Per-client quota management
+
+7. **Database** (Optional)
+   - PostgreSQL for campaign/variant tracking
+   - Currently using file-based metadata
 
 ---
 
