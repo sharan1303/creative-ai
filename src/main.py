@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -17,12 +17,13 @@ from pydantic import BaseModel, Field
 from src.celery_app import celery_app
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
 from src.services.genai import GenAIOrchestrator
+from src.services.google_image_client import GoogleImageClient
 from src.services.openai_image_client import OpenAIImageClient
 from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
 from src.services.variant_generation import generate_variant
 from src.tasks import process_campaign_task
-from src.utils.config import settings
+from src.utils.config import runtime_config, settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -57,6 +58,17 @@ class CampaignProcessResponse(BaseModel):
     results: List[VariantResult] = Field(default_factory=list)
 
 
+class ModelSelectionRequest(BaseModel):
+    provider: Literal["openai", "google"]
+    model: str
+
+
+class ModelSelectionResponse(BaseModel):
+    provider: str
+    model: str
+    message: str = "Model configuration updated successfully"
+
+
 # -----------------------
 # Simple API key auth
 # -----------------------
@@ -81,6 +93,42 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+@app.post("/select-model", response_model=ModelSelectionResponse)
+async def select_model(request: ModelSelectionRequest) -> ModelSelectionResponse:
+    """Select the provider and model for image generation
+
+    Args:
+        request: Model selection request containing provider and model
+
+    Returns:
+        Updated model configuration
+    """
+    try:
+        runtime_config.update(request.provider, request.model)
+        logger.info(
+            f"Model config updated: provider={request.provider}, model={request.model}"
+        )
+
+        return ModelSelectionResponse(provider=request.provider, model=request.model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/current-model", response_model=ModelSelectionResponse)
+async def get_current_model() -> ModelSelectionResponse:
+    """Get the current provider and model configuration
+
+    Returns:
+        Current model configuration
+    """
+    config = runtime_config.to_dict()
+    return ModelSelectionResponse(
+        provider=config["provider"],
+        model=config["model"],
+        message="Current model configuration",
+    )
+
+
 @app.post(
     "/campaigns/process",
     response_model=CampaignProcessResponse,
@@ -99,7 +147,10 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     openai_client: OpenAIImageClient | None = None
     try:
         openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
-        orchestrator = GenAIOrchestrator(openai_client=openai_client)
+        google_client = GoogleImageClient()
+        orchestrator = GenAIOrchestrator(
+            openai_client=openai_client, google_client=google_client
+        )
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
     except Exception as e:  # pragma: no cover - defensive
@@ -126,6 +177,8 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
                     product=product,
                     brief=brief,
                     ratio=ratio,
+                    providers_to_try=[runtime_config.provider],
+                    models_to_try=[runtime_config.model],
                 )
             )
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -204,7 +257,10 @@ class JobStatusResponse(BaseModel):
     dependencies=[Depends(require_api_key)],
 )
 async def create_job(brief: CampaignBrief) -> JobCreateResponse:
-    task = process_campaign_task.delay(brief.model_dump())
+    # Pass current model configuration to the Celery task
+    task = process_campaign_task.delay(
+        brief.model_dump(), provider=runtime_config.provider, model=runtime_config.model
+    )
     return JobCreateResponse(job_id=task.id, status="pending")
 
 
@@ -254,6 +310,8 @@ async def _generate_variant(
     product,
     brief,
     ratio,
+    providers_to_try: List[str] | None = None,
+    models_to_try: List[str] | None = None,
 ) -> Dict[str, Any]:
     return await generate_variant(
         orchestrator=orchestrator,
@@ -262,5 +320,7 @@ async def _generate_variant(
         product=product,
         brief=brief,
         ratio=ratio,
+        providers_to_try=providers_to_try,
+        models_to_try=models_to_try,
         offload_blocking=True,
     )

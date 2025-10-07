@@ -54,8 +54,14 @@ class Settings(BaseSettings):
     GENAI_PROVIDER: str = "openai"  # Primary: openai | google | huggingface | mock
     GENAI_FALLBACKS: str = "google,huggingface,mock"  # Comma-separated fallback order
 
-    # Image generation settings - DALL-E 3
-    DEFAULT_IMAGE_QUALITY: str = "standard"  # Options: standard | hd
+    # Model selection per provider
+    OPENAI_DEFAULT_MODEL: str = "gpt-image-1"  # Options: dall-e-3, gpt-image-1, gpt-image-1-mini
+    GOOGLE_DEFAULT_MODEL: str = "gemini-2.5-flash-image"  # Google AI model
+
+    # Image generation settings
+    DEFAULT_IMAGE_QUALITY: str = "standard"  # Options: standard | hd (OpenAI), low/medium/high/auto (gpt-image)
+    DEFAULT_IMAGE_WIDTH: int = 1024  # Default image width
+    DEFAULT_IMAGE_HEIGHT: int = 1024  # Default image height
 
     # Agent monitoring settings
     AGENT_LLM_MODEL: str = "gpt-5-mini"  # Model for alert generation
@@ -83,3 +89,61 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+
+class RuntimeConfig:
+    """Runtime configuration for session-based model selection
+
+    This allows API-based configuration changes that persist for the application
+    session without modifying environment variables.
+    """
+
+    def __init__(self):
+        # Initialize with values from environment settings
+        self._provider = settings.GENAI_PROVIDER
+        self._model = self._get_default_model_for_provider(self._provider)
+
+    @property
+    def provider(self) -> str:
+        return self._provider
+
+    @provider.setter
+    def provider(self, value: str) -> None:
+        if value not in ["openai", "google"]:
+            raise ValueError(f"Invalid provider: {value}. Must be 'openai' or 'google'")
+        self._provider = value
+        # Update model to match provider if not explicitly set
+        self._model = self._get_default_model_for_provider(value)
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @model.setter
+    def model(self, value: str) -> None:
+        self._model = value
+
+    def update(self, provider: str, model: str) -> None:
+        """Update both provider and model atomically"""
+        if provider not in ["openai", "google"]:
+            raise ValueError(
+                f"Invalid provider: {provider}. Must be 'openai' or 'google'"
+            )
+        self._provider = provider
+        self._model = model
+
+    def _get_default_model_for_provider(self, provider: str) -> str:
+        """Get default model for a given provider"""
+        if provider == "openai":
+            return settings.OPENAI_DEFAULT_MODEL
+        elif provider == "google":
+            return settings.GOOGLE_DEFAULT_MODEL
+        return "gpt-image-1"  # fallback
+
+    def to_dict(self) -> dict:
+        """Export configuration as dictionary"""
+        return {"provider": self._provider, "model": self._model}
+
+
+# Global runtime configuration instance
+runtime_config = RuntimeConfig()

@@ -2,6 +2,7 @@
 
 The task reuses the same pipeline services as the FastAPI endpoint.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -11,32 +12,47 @@ from typing import Any, Dict, List
 from src.celery_app import celery_app
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
 from src.services.genai import GenAIOrchestrator
+from src.services.google_image_client import GoogleImageClient
 from src.services.openai_image_client import OpenAIImageClient
 from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
 from src.services.variant_generation import generate_variant
-from src.utils.config import settings
+from src.utils.config import runtime_config, settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
 @celery_app.task(name="process_campaign_task")
-def process_campaign_task(brief_dict: Dict[str, Any]) -> Dict[str, Any]:
+def process_campaign_task(
+    brief_dict: Dict[str, Any], provider: str | None = None, model: str | None = None
+) -> Dict[str, Any]:
     """Run campaign processing synchronously in a worker thread.
 
     Note: Celery tasks are sync. We run async parts via asyncio.run.
     Returns a summary dict including per-variant results.
+
+    Args:
+        brief_dict: Campaign brief as dictionary
+        provider: Image generation provider (openai or google). If None, uses runtime_config.
+        model: Model name. If None, uses runtime_config.
     """
 
     brief = CampaignBrief(**brief_dict)
+
+    # Use passed provider/model or fall back to runtime config
+    selected_provider = provider or runtime_config.provider
+    selected_model = model or runtime_config.model
 
     async def _run() -> Dict[str, Any]:
         if not settings.OPENAI_API_KEY:
             raise RuntimeError("OPENAI_API_KEY not configured")
 
         openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
-        orchestrator = GenAIOrchestrator(openai_client=openai_client)
+        google_client = GoogleImageClient()
+        orchestrator = GenAIOrchestrator(
+            openai_client=openai_client, google_client=google_client
+        )
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
 
@@ -49,7 +65,14 @@ def process_campaign_task(brief_dict: Dict[str, Any]) -> Dict[str, Any]:
             ratios = list(ASPECT_RATIOS)
             tasks = [
                 _generate_variant(
-                    orchestrator, processor, storage, product, brief, ratio
+                    orchestrator,
+                    processor,
+                    storage,
+                    product,
+                    brief,
+                    ratio,
+                    providers_to_try=[selected_provider],
+                    models_to_try=[selected_model],
                 )
                 for ratio in ratios
             ]
@@ -105,6 +128,8 @@ async def _generate_variant(
     product,
     brief: CampaignBrief,
     ratio,
+    providers_to_try: List[str] | None = None,
+    models_to_try: List[str] | None = None,
 ) -> Dict[str, Any]:
     return await generate_variant(
         orchestrator=orchestrator,
@@ -113,5 +138,7 @@ async def _generate_variant(
         product=product,
         brief=brief,
         ratio=ratio,
+        providers_to_try=providers_to_try,
+        models_to_try=models_to_try,
         offload_blocking=True,
     )
