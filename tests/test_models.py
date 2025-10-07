@@ -28,11 +28,11 @@ def test_campaign_brief_valid():
     assert brief.locale == "en"
 
 
-def test_campaign_brief_requires_two_products():
-    """Test that at least 2 products are required"""
+def test_campaign_brief_requires_one_or_more_products():
+    """Test that at least 1 product is required"""
     invalid_brief = {
         "campaign_id": "test-001",
-        "products": [{"id": "p1", "name": "Product 1"}],  # Only 1 product
+        "products": [],  # 0 products should fail
         "target_market": "US",
         "target_audience": "Test",
         "campaign_message": "Test",
@@ -44,7 +44,7 @@ def test_campaign_brief_requires_two_products():
     # Check that validation failed for products field with correct constraint
     assert "products" in str(exc_info.value).lower()
     assert (
-        "at least 2" in str(exc_info.value).lower()
+        "at least 1" in str(exc_info.value).lower()
         or "too_short" in str(exc_info.value).lower()
     )
 

@@ -10,6 +10,9 @@ import json
 import sys
 from pathlib import Path
 
+import questionary
+
+from src.services.google_image_client import GoogleImageClient
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
 from src.services.genai import GenAIOrchestrator
 from src.services.openai_image_client import OpenAIImageClient
@@ -22,7 +25,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def process_campaign(brief_path: str) -> None:
+async def process_campaign(brief_path: str, provider: str, model: str) -> None:
     """Main pipeline execution orchestrator
 
     Workflow:

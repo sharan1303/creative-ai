@@ -6,12 +6,13 @@ Centralises logic used by both the CLI and FastAPI layers to avoid duplication.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from src.models.brief import AspectRatio, CampaignBrief, Product
 from src.services.genai import GenAIOrchestrator
 from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
+from src.utils.config import settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -66,6 +67,8 @@ async def generate_variant(
     brief: CampaignBrief,
     ratio: AspectRatio,
     *,
+    providers_to_try: Optional[List[str]] = None,
+    models_to_try: Optional[List[str]] = None,
     offload_blocking: bool = False,
 ) -> Dict[str, Any]:
     """Generate and post-process a single variant, then save output.
@@ -112,6 +115,9 @@ async def generate_variant(
         width=ratio.width,
         height=ratio.height,
         product_id=product.id,
+        providers=providers_to_try,
+        models=models_to_try,
+        quality=settings.DEFAULT_IMAGE_QUALITY,
     )
 
     # Step 3: Resize to exact target

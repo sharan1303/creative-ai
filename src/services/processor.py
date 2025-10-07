@@ -33,9 +33,11 @@ class ImageProcessor:
         logger.info("Image Processor initialized")
 
     def resize(self, image_data: bytes, target_width: int, target_height: int) -> bytes:
-        """Resize image to target dimensions with quality preservation
+        """Resize image to target dimensions with aspect ratio preservation
 
-        Uses LANCZOS resampling for high-quality downscaling.
+        Uses LANCZOS resampling for high-quality scaling. The image is scaled
+        to cover the target dimensions, then center-cropped to exact size.
+        This prevents stretching/distortion.
 
         Args:
             image_data: Original image bytes
@@ -52,8 +54,33 @@ class ImageProcessor:
 
         # Only resize if dimensions don't match
         if img.size != (target_width, target_height):
-            img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
-            logger.debug(f"Resized from {original_size} to {img.size}")
+            # Calculate aspect ratios
+            target_ratio = target_width / target_height
+            current_ratio = img.width / img.height
+
+            # Scale to cover target dimensions (prevent stretching)
+            if current_ratio > target_ratio:
+                # Image is wider - scale by height
+                new_height = target_height
+                new_width = int(img.width * (target_height / img.height))
+            else:
+                # Image is taller or square - scale by width
+                new_width = target_width
+                new_height = int(img.height * (target_width / img.width))
+
+            # Resize to cover dimensions
+            img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+            # Center crop to exact target size
+            left = (new_width - target_width) // 2
+            top = (new_height - target_height) // 2
+            right = left + target_width
+            bottom = top + target_height
+            img = img.crop((left, top, right, bottom))
+
+            logger.debug(
+                f"Resized from {original_size} to {img.size} (aspect ratio preserved)"
+            )
         else:
             logger.debug("Image already at target size, skipping resize")
 
@@ -104,12 +131,12 @@ class ImageProcessor:
                 # Try common system fonts
                 try:
                     font = ImageFont.truetype("arial.ttf", font_size)
-                except(Exception):
+                except Exception:
                     try:
                         font = ImageFont.truetype(
                             "/System/Library/Fonts/Helvetica.ttc", font_size
                         )
-                    except(Exception):
+                    except Exception:
                         logger.warning("Could not load custom font, using default")
                         font = ImageFont.load_default()
         except Exception as e:

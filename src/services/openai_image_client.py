@@ -42,7 +42,6 @@ class OpenAIImageClient:
         )
         logger.info("OpenAI Image Client initialized")
 
-
     async def generate(
         self,
         prompt: str,
@@ -75,7 +74,8 @@ class OpenAIImageClient:
             "n": 1,
         }
 
-        # DALL-E 3 supports b64_json for direct base64, gpt-image-1 only supports URL
+        # Prefer base64 when available to avoid a second download request
+        # Some models (including gpt-image family) may also return b64_json
         if model == "dall-e-3":
             payload["response_format"] = "b64_json"
 
@@ -85,20 +85,30 @@ class OpenAIImageClient:
 
             data = response.json()
 
-            # Handle different response formats
-            if model == "dall-e-3":
-                # DALL-E 3: Get base64 directly
+            # Handle different response formats generically
+            entries = data.get("data") or []
+            if not isinstance(entries, list) or not entries:
+                raise ValueError(
+                    f"Unexpected OpenAI image response: missing 'data' array (keys: {list(data.keys())})"
+                )
+            first = entries[0]
+
+            # Prefer base64 if present
+            if "b64_json" in first and first["b64_json"]:
                 import base64
 
-                image_b64 = data["data"][0]["b64_json"]
+                image_b64 = first["b64_json"]
                 image_bytes = base64.b64decode(image_b64)
-            else:
-                # gpt-image-1: Download from URL
-                image_url = data["data"][0]["url"]
+            elif "url" in first and first["url"]:
+                image_url = first["url"]
                 logger.debug(f"Downloading image from: {image_url}")
                 image_response = await self.client.get(image_url)
                 image_response.raise_for_status()
                 image_bytes = image_response.content
+            else:
+                raise ValueError(
+                    f"OpenAI image response missing 'b64_json' and 'url' (entry keys: {list(first.keys())})"
+                )
 
             logger.info(f"Successfully generated image ({len(image_bytes)} bytes)")
             return image_bytes

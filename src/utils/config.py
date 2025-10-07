@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     GOOGLE_LOCATION: Optional[str] = "us-central1"
     GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None  # Path to service account JSON
 
+    # Google AI (API key-based Gemini Image API)
+    GOOGLE_AI_API_KEY: Optional[str] = None
+    GOOGLE_AI_IMAGE_MODEL: str = "gemini-2.5-flash-image"
+    GOOGLE_AI_ENDPOINT: str = "https://generativelanguage.googleapis.com"
+
     # Storage configuration
     STORAGE_MODE: str = "local"  # Options: "local" | "azure" | "s3"
     AZURE_STORAGE_CONNECTION_STRING: Optional[str] = None
@@ -51,6 +56,22 @@ class Settings(BaseSettings):
 
     # Image generation settings - DALL-E 3
     DEFAULT_IMAGE_QUALITY: str = "standard"  # Options: standard | hd
+
+    # Agent monitoring settings
+    AGENT_LLM_MODEL: str = "gpt-5-mini"  # Model for alert generation
+    AGENT_CHECK_INTERVAL: int = 60  # Seconds between monitoring checks
+    AGENT_SLA_THRESHOLD_MINUTES: int = 10  # Minutes before SLA breach alert
+
+    # Email/SMTP settings (for agent alerts)
+    SMTP_HOST: Optional[str] = None
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None
+    SMTP_PASSWORD: Optional[str] = None
+    SMTP_FROM: str = "noreply@company.com"
+    STAKEHOLDER_EMAIL: str = "creative-lead@company.com"
+
+    # Slack webhook (optional)
+    SLACK_WEBHOOK_URL: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
