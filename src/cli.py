@@ -10,8 +10,11 @@ import json
 import sys
 from pathlib import Path
 
+import questionary
+
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
 from src.services.genai import GenAIOrchestrator
+from src.services.google_image_client import GoogleImageClient
 from src.services.openai_image_client import OpenAIImageClient
 from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
@@ -22,7 +25,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-async def process_campaign(brief_path: str) -> None:
+async def process_campaign(brief_path: str, provider: str, model: str) -> None:
     """Main pipeline execution orchestrator
 
     Workflow:
@@ -66,15 +69,22 @@ async def process_campaign(brief_path: str) -> None:
     # Step 2: Initialize services
     logger.info("\nInitializing services...")
 
-    # Check for API key
-    if not settings.OPENAI_API_KEY:
-        logger.error("OPENAI_API_KEY not configured!")
-        logger.error("Please set OPENAI_API_KEY in .env file or environment")
-        sys.exit(1)
-
     try:
-        openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
-        orchestrator = GenAIOrchestrator(openai_client=openai_client)
+        openai_client = None
+        if settings.OPENAI_API_KEY:
+            openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+        else:
+            logger.warning("OPENAI_API_KEY not configured; OpenAI provider disabled")
+
+        google_client = None
+        if settings.GOOGLE_AI_API_KEY:
+            google_client = GoogleImageClient()
+        else:
+            logger.warning("GOOGLE_AI_API_KEY not configured; Google provider disabled")
+
+        orchestrator = GenAIOrchestrator(
+            openai_client=openai_client, google_client=google_client
+        )
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
         logger.info("[OK] All services initialized")
@@ -103,6 +113,8 @@ async def process_campaign(brief_path: str) -> None:
                 product=product,
                 brief=brief,
                 ratio=ratio,
+                providers_to_try=[provider],
+                models_to_try=[model],
             )
             tasks.append(task)
 
@@ -122,7 +134,10 @@ async def process_campaign(brief_path: str) -> None:
                 logger.info(f"  [OK] Generated: {result['ratio']}")
 
     # Step 4: Cleanup and summary
-    await openai_client.close()
+    if openai_client is not None:
+        await openai_client.close()
+    if google_client is not None:
+        await google_client.close()
 
     logger.info("\n" + "=" * 80)
     logger.info("Pipeline Execution Complete!")
@@ -142,19 +157,26 @@ def main():
     parser = argparse.ArgumentParser(
         description="Creative Automation Pipeline - Adobe FDE Take-Home",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  uv run -m src.cli --brief examples/brief_single_product.json
-  uv run -m src.cli --brief examples/brief_multi_product.json
-
-Environment Variables:
-  OPENAI_API_KEY       Required - OpenAI API key for image generation
-  LOG_LEVEL           Optional - Logging level (default: INFO)
-  GENAI_PROVIDER      Optional - Primary provider (default: openai)
-        """,
     )
 
     parser.add_argument(
+        "--version", action="version", version="Creative Automation Pipeline v1.0.0"
+    )
+
+    # Create subparsers for different commands
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Process command
+    process_parser = subparsers.add_parser(
+        "process",
+        help="Process a campaign brief and generate assets",
+        epilog="""
+Examples:
+  uv run -m src.cli process --brief examples/brief_single_product.json
+  uv run -m src.cli process --brief examples/brief_multi_product.json
+        """,
+    )
+    process_parser.add_argument(
         "--brief", required=True, help="Path to campaign brief JSON file"
     )
 
@@ -164,9 +186,68 @@ Environment Variables:
 
     args = parser.parse_args()
 
-    # Run async pipeline
+    # Show help if no command specified
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    # Run appropriate command
     try:
-        asyncio.run(process_campaign(args.brief))
+        if args.command == "process":
+            # Build provider choices based on available credentials
+            provider_choices = []
+            if settings.OPENAI_API_KEY:
+                provider_choices.append("OpenAI")
+            else:
+                logger.info(
+                    "OpenAI disabled: missing OPENAI_API_KEY in environment/.env"
+                )
+
+            if settings.GOOGLE_AI_API_KEY:
+                provider_choices.append("Google")
+            else:
+                logger.info(
+                    "Google disabled: missing GOOGLE_AI_API_KEY in environment/.env"
+                )
+
+            if not provider_choices:
+                logger.error(
+                    "No providers available. Set OPENAI_API_KEY and/or GOOGLE_AI_API_KEY."
+                )
+                sys.exit(1)
+
+            if len(provider_choices) == 1:
+                provider_choice = provider_choices[0]
+            else:
+                provider_choice = questionary.select(
+                    "Select provider",
+                    choices=provider_choices,
+                ).ask()
+            provider = (
+                "openai" if str(provider_choice).lower() == "openai" else "google"
+            )
+
+            if provider == "openai":
+                model = questionary.select(
+                    "Select OpenAI image model",
+                    choices=[
+                        "dall-e-3",
+                        "gpt-image-1",
+                        "gpt-image-1-mini",
+                    ],
+                ).ask()
+            else:
+                model = questionary.select(
+                    "Select Google model",
+                    choices=[
+                        "gemini-2.5-flash-image",
+                    ],
+                ).ask()
+
+            asyncio.run(process_campaign(args.brief, provider, model))
+
+        elif args.command == "monitor":
+            asyncio.run(run_monitoring_agent(args.interval, args.sla_threshold))
     except KeyboardInterrupt:
         logger.info("\nPipeline interrupted by user")
         sys.exit(130)
