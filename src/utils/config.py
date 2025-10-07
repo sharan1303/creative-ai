@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     GOOGLE_DEFAULT_MODEL: str = "gemini-2.5-flash-image"  # Google AI model
 
     # Image generation settings
-    DEFAULT_IMAGE_QUALITY: str = "standard"  # Options: standard | hd (OpenAI), low/medium/high/auto (gpt-image)
+    DEFAULT_IMAGE_QUALITY: str = "low"  # Options: standard | hd (OpenAI), low/medium/high/auto (gpt-image)
     DEFAULT_IMAGE_WIDTH: int = 1024  # Default image width
     DEFAULT_IMAGE_HEIGHT: int = 1024  # Default image height
 
@@ -99,9 +99,11 @@ class RuntimeConfig:
     """
 
     def __init__(self):
-        # Initialize with values from environment settings
-        self._provider = settings.GENAI_PROVIDER
+        # Initialize with validated provider and aligned model
+        self._provider = "openai"
         self._model = self._get_default_model_for_provider(self._provider)
+        # Apply environment override via setter (validates and aligns model)
+        self.provider = settings.GENAI_PROVIDER
 
     @property
     def provider(self) -> str:

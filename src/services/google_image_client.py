@@ -142,6 +142,12 @@ class GoogleImageClient:
             logger.debug(f"Response data: {data}")
             raise
 
+    async def close(self):
+        """Close the HTTP client connection"""
+        if self._http:
+            await self._http.aclose()
+            logger.info("Google Image Client closed")
+
     def _parse_size(self, size: str) -> Tuple[int, int]:
         try:
             w_str, h_str = size.lower().split("x", 1)

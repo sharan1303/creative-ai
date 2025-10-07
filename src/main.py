@@ -140,19 +140,38 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     This endpoint executes a similar workflow as the CLI pipeline but operates on
     the provided JSON payload instead of a file.
     """
-    if not settings.OPENAI_API_KEY:
-        raise HTTPException(status_code=400, detail="OPENAI_API_KEY not configured")
+    # Get the current provider from runtime config
+    provider = runtime_config.provider
 
-    # Initialize services
+    # Validate and instantiate only the required client(s) based on provider
     openai_client: OpenAIImageClient | None = None
+    google_client: GoogleImageClient | None = None
+
     try:
-        openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
-        google_client = GoogleImageClient()
+        if provider == "openai":
+            if not settings.OPENAI_API_KEY:
+                raise HTTPException(
+                    status_code=400,
+                    detail="OPENAI_API_KEY not configured for provider 'openai'",
+                )
+            openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+        elif provider == "google":
+            if not settings.GOOGLE_AI_API_KEY:
+                raise HTTPException(
+                    status_code=400,
+                    detail="GOOGLE_AI_API_KEY not configured for provider 'google'",
+                )
+            google_client = GoogleImageClient()
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
         orchestrator = GenAIOrchestrator(
             openai_client=openai_client, google_client=google_client
         )
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
+    except HTTPException:
+        raise
     except Exception as e:  # pragma: no cover - defensive
         logger.exception("Failed to initialise services")
         raise HTTPException(
@@ -216,8 +235,11 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     try:
         await asyncio.gather(*[_run_for_product(product) for product in brief.products])
     finally:
+        # Ensure all instantiated clients are properly closed
         if openai_client is not None:
             await openai_client.close()
+        if google_client is not None:
+            await google_client.close()
 
     return CampaignProcessResponse(
         campaign_id=brief.campaign_id,

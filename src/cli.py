@@ -136,6 +136,8 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
     # Step 4: Cleanup and summary
     if openai_client is not None:
         await openai_client.close()
+    if google_client is not None:
+        await google_client.close()
 
     logger.info("\n" + "=" * 80)
     logger.info("Pipeline Execution Complete!")
