@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
 
     # Provider selection and fallback chain
-    GENAI_PROVIDER: str = "openai"  # Primary: openai | google | huggingface | mock
-    GENAI_FALLBACKS: str = "google,huggingface,mock"  # Comma-separated fallback order
+    GENAI_PROVIDER: str = "openai"  # Primary: openai | google 
+    GENAI_FALLBACKS: str = "google"  # Comma-separated fallback order
 
     # Model selection per provider
     OPENAI_DEFAULT_MODEL: str = "gpt-image-1"  # Options: dall-e-3, gpt-image-1, gpt-image-1-mini
