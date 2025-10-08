@@ -6,7 +6,7 @@ Centralises logic used by both the CLI and FastAPI layers to avoid duplication.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from src.models.brief import AspectRatio, CampaignBrief, Product
 from src.services.genai import GenAIOrchestrator
@@ -14,6 +14,9 @@ from src.services.processor import ImageProcessor
 from src.services.storage import StorageManager
 from src.utils.config import settings
 from src.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from src.db.database import Database
 
 logger = get_logger(__name__)
 
@@ -70,6 +73,7 @@ async def generate_variant(
     providers_to_try: Optional[List[str]] = None,
     models_to_try: Optional[List[str]] = None,
     offload_blocking: bool = False,
+    database: Optional[Database] = None,
 ) -> Dict[str, Any]:
     """Generate and post-process a single variant, then save output.
 
@@ -80,7 +84,10 @@ async def generate_variant(
         product: Product information
         brief: Campaign brief
         ratio: Target aspect ratio
+        providers_to_try: Optional list of providers to try
+        models_to_try: Optional list of models to try
         offload_blocking: If True, run blocking calls in threads (for FastAPI)
+        database: Optional database connection for recording variants and errors
 
     Returns:
         Dictionary with generation result metadata
@@ -110,15 +117,31 @@ async def generate_variant(
     # Step 2: Generate new image
     prompt = build_generation_prompt(product, brief)
     logger.debug(f"Prompt for {product.id}: {prompt[:100]}...")
-    image_data = await orchestrator.generate_image(
-        prompt=prompt,
-        width=ratio.width,
-        height=ratio.height,
-        product_id=product.id,
-        providers=providers_to_try,
-        models=models_to_try,
-        quality=settings.DEFAULT_IMAGE_QUALITY,
-    )
+
+    try:
+        image_data = await orchestrator.generate_image(
+            prompt=prompt,
+            width=ratio.width,
+            height=ratio.height,
+            product_id=product.id,
+            providers=providers_to_try,
+            models=models_to_try,
+            quality=settings.DEFAULT_IMAGE_QUALITY,
+        )
+    except Exception as e:
+        # Log error to database if available
+        if database:
+            try:
+                database.create_error(
+                    campaign_id=brief.campaign_id,
+                    product_id=product.id,
+                    error_type="api_failure",
+                    error_message=str(e)[:500],
+                )
+            except Exception as db_err:
+                logger.warning(f"Failed to log error to database: {db_err}")
+        # Re-raise the original exception
+        raise
 
     # Step 3: Resize to exact target
     if offload_blocking:
@@ -139,24 +162,26 @@ async def generate_variant(
         )
 
     # Step 5: Save output (only for new generations)
+    metadata = {
+        "campaign_id": brief.campaign_id,
+        "product_id": product.id,
+        "product_name": product.name,
+        "aspect_ratio": ratio.name,
+        "dimensions": f"{ratio.width}x{ratio.height}",
+        "platform": ratio.platform,
+        "target_market": brief.target_market,
+        "target_audience": brief.target_audience,
+        "campaign_message": brief.campaign_message,
+        "reused": False,
+    }
+
     if offload_blocking:
         output_path = await asyncio.to_thread(
             storage.save_output,
             product.id,
             ratio.name,
             image_data,
-            {
-                "campaign_id": brief.campaign_id,
-                "product_id": product.id,
-                "product_name": product.name,
-                "aspect_ratio": ratio.name,
-                "dimensions": f"{ratio.width}x{ratio.height}",
-                "platform": ratio.platform,
-                "target_market": brief.target_market,
-                "target_audience": brief.target_audience,
-                "campaign_message": brief.campaign_message,
-                "reused": False,
-            },
+            metadata,
             brief.campaign_id,
         )
     else:
@@ -165,19 +190,23 @@ async def generate_variant(
             ratio_name=ratio.name,
             image_data=image_data,
             campaign_id=brief.campaign_id,
-            metadata={
-                "campaign_id": brief.campaign_id,
-                "product_id": product.id,
-                "product_name": product.name,
-                "aspect_ratio": ratio.name,
-                "dimensions": f"{ratio.width}x{ratio.height}",
-                "platform": ratio.platform,
-                "target_market": brief.target_market,
-                "target_audience": brief.target_audience,
-                "campaign_message": brief.campaign_message,
-                "reused": False,
-            },
+            metadata=metadata,
         )
+
+    # Step 6: Record variant to database (only for new generations)
+    if database:
+        try:
+            database.create_variant(
+                campaign_id=brief.campaign_id,
+                product_id=product.id,
+                product_name=product.name,
+                aspect_ratio=ratio.name,
+                file_path=str(output_path),
+                metadata=metadata,
+            )
+            logger.debug(f"Recorded variant to database: {product.id}/{ratio.name}")
+        except Exception as e:
+            logger.warning(f"Failed to record variant to database: {e}")
 
     return {
         "success": True,
