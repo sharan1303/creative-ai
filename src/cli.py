@@ -270,6 +270,36 @@ Examples:
         help=f"SLA threshold in minutes (default: {settings.AGENT_SLA_THRESHOLD_MINUTES})",
     )
 
+    # Alerts command
+    alerts_parser = subparsers.add_parser(
+        "alerts",
+        help="Show latest alert payload (optionally filtered by campaign)",
+        epilog="""
+Examples:
+  uv run -m src.cli alerts
+  uv run -m src.cli alerts --campaign summer-splash-eu-2025
+        """,
+    )
+    alerts_parser.add_argument(
+        "--campaign",
+        help="Campaign ID to filter alerts",
+        required=False,
+        default=None,
+    )
+    alerts_parser.add_argument(
+        "--text",
+        action="store_true",
+        help="Print the email body as plain text",
+    )
+    alerts_parser.add_argument(
+        "--regenerate",
+        action="store_true",
+        help=(
+            "Regenerate the email using mock provider (ignores stored content); "
+            "useful if the stored payload is an SDK object string"
+        ),
+    )
+
     args = parser.parse_args()
 
     # Show help if no command specified
@@ -334,6 +364,49 @@ Examples:
 
         elif args.command == "monitor":
             asyncio.run(run_monitoring_agent(args.interval, args.sla_threshold))
+        elif args.command == "alerts":
+            db = Database()
+            alert = db.get_latest_alert(args.campaign)
+            if not alert:
+                print(
+                    "No alerts found"
+                    + (f" for campaign {args.campaign}" if args.campaign else "")
+                )
+                sys.exit(0)
+            if args.text or args.regenerate:
+                # Optionally regenerate to ensure human-readable text
+                if args.regenerate:
+                    try:
+                        # Force mock provider to guarantee plain text output
+                        setattr(settings, "GENAI_PROVIDER", "google")
+                    except Exception:
+                        pass
+
+                from src.agent.context import build_alert_context
+                from src.agent.llm_client import generate_alert_email
+
+                async def _render_email_text() -> str:
+                    campaign = db.get_campaign(alert.campaign_id)
+                    if campaign is None:
+                        return alert.email_content
+                    ctx = await build_alert_context(
+                        campaign=campaign, issue_type=alert.issue_type, context={}
+                    )
+                    return await generate_alert_email(ctx)
+
+                email_text = asyncio.run(_render_email_text())
+                print(email_text)
+            else:
+                # Output as JSON for easy consumption
+                payload = {
+                    "id": alert.id,
+                    "campaign_id": alert.campaign_id,
+                    "issue_type": alert.issue_type,
+                    "recipient": alert.recipient,
+                    "sent_at": alert.sent_at.isoformat(),
+                    "email_content": alert.email_content,
+                }
+                print(json.dumps(payload, indent=2))
     except KeyboardInterrupt:
         logger.info("\nPipeline interrupted by user")
         sys.exit(130)

@@ -363,6 +363,32 @@ class Database:
 
         return alerts
 
+    def get_latest_alert(self, campaign_id: Optional[str] = None) -> Optional[Alert]:
+        """Get the most recent alert, optionally filtered by campaign."""
+        conn = self._get_conn()
+
+        if campaign_id:
+            cursor = conn.execute(
+                """
+                SELECT * FROM alerts
+                WHERE campaign_id = ?
+                ORDER BY sent_at DESC
+                LIMIT 1
+                """,
+                (campaign_id,),
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT * FROM alerts
+                ORDER BY sent_at DESC
+                LIMIT 1
+                """
+            )
+
+        row = cursor.fetchone()
+        return self._row_to_alert(row) if row else None
+
     # Helper methods for row conversion
 
     def _row_to_campaign(self, row: sqlite3.Row) -> Campaign:
