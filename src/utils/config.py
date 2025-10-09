@@ -88,6 +88,11 @@ class Settings(BaseSettings):
 
     # Slack webhook (optional)
     SLACK_WEBHOOK_URL: Optional[str] = None
+    
+    # MCP Server Configuration
+    MCP_SERVER_URL: str = "http://localhost:8001"
+    MCP_SERVER_HOST: str = "0.0.0.0"
+    MCP_SERVER_PORT: int = 8001
 
     model_config = SettingsConfigDict(
         env_file=".env",

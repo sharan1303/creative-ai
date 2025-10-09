@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from src.utils.logger import get_logger
 
@@ -355,6 +355,24 @@ class Database:
         cursor = conn.execute(
             "SELECT * FROM alerts WHERE campaign_id = ? ORDER BY sent_at DESC",
             (campaign_id,),
+        )
+
+        alerts = []
+        for row in cursor.fetchall():
+            alerts.append(self._row_to_alert(row))
+
+        return alerts
+
+    def get_alerts_since(self, campaign_id: str, since: datetime) -> List[Alert]:
+        """Get alerts for a campaign since a specific timestamp"""
+        conn = self._get_conn()
+        cursor = conn.execute(
+            """
+            SELECT * FROM alerts
+            WHERE campaign_id = ? AND sent_at >= ?
+            ORDER BY sent_at DESC
+            """,
+            (campaign_id, since.isoformat()),
         )
 
         alerts = []

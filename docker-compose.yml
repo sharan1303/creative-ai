@@ -45,7 +45,32 @@ services:
       - .env
     depends_on:
       - redis
+      - mcp-server
     working_dir: /app
     command: ["uv", "run", "-m", "src.cli", "monitor"]
     restart: unless-stopped
+    environment:
+      - MCP_SERVER_URL=http://mcp-server:8001
+
+  mcp-server:
+    build: .
+    container_name: creative-ai-mcp
+    volumes:
+      - ./:/app
+      - ./outputs:/app/outputs
+      - ./assets:/app/assets
+    env_file:
+      - .env
+    working_dir: /app
+    command: ["python", "-m", "src.mcp.server"]
+    ports:
+      - "8001:8001"
+    environment:
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_SERVER_PORT=8001
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 

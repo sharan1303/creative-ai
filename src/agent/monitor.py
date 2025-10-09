@@ -13,7 +13,6 @@ import json
 from datetime import datetime, timedelta
 
 from src.agent.alerting import deliver_alert
-from src.agent.context import build_alert_context
 from src.agent.llm_client import generate_alert_email
 from src.db.database import Campaign, get_db
 from src.utils.config import settings
@@ -265,13 +264,30 @@ class CampaignMonitorAgent:
         logger.info(f"Triggering alert for campaign {campaign.id}: {issue_type}")
 
         try:
-            # Build context for LLM
-            alert_context = await build_alert_context(
-                campaign=campaign, issue_type=issue_type, context=context
+            # Generate email content using MCP-enabled LLM
+            email_content = await generate_alert_email(
+                campaign_id=campaign.id, issue_type=issue_type, context=context
             )
 
-            # Generate email content using LLM
-            email_content = await generate_alert_email(alert_context)
+            # Create minimal alert context for delivery (backward compatibility)
+            from src.agent.models import AlertContext, CampaignContext
+
+            alert_context = AlertContext(
+                issue_type=issue_type,
+                campaign=CampaignContext(
+                    campaign_id=campaign.id,
+                    campaign_name=campaign.name or campaign.id,
+                    created_at=campaign.created_at.isoformat(),
+                    elapsed_time=str(datetime.now() - campaign.created_at),
+                    target_market=campaign.target_market or "Unknown",
+                    target_audience=campaign.target_audience,
+                    campaign_message=campaign.campaign_message,
+                    products=[],
+                ),
+                errors=[],
+                root_cause="Analyzed via MCP tools",
+                context=context,
+            )
 
             # Deliver alert
             await deliver_alert(
