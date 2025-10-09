@@ -417,10 +417,16 @@ Examples:
                     campaign = db.get_campaign(alert.campaign_id)
                     if campaign is None:
                         return alert.email_content
-                    ctx = await build_alert_context(
+                    # Build context (kept for potential future display or debugging)
+                    await build_alert_context(
                         campaign=campaign, issue_type=alert.issue_type, context={}
                     )
-                    return await generate_alert_email(ctx)
+                    # Generate email using MCP-enabled signature
+                    return await generate_alert_email(
+                        campaign_id=alert.campaign_id,
+                        issue_type=alert.issue_type,
+                        context={},
+                    )
 
                 email_text = asyncio.run(_render_email_text())
                 print(email_text)
