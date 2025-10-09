@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mcp import FastApiMCP
 
 from src.mcp.endpoints import router
+from src.utils.config import settings
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -21,10 +22,30 @@ app = FastAPI(
 )
 
 # Add CORS middleware for cross-origin requests
+# Read allowed origins from configuration; comma-separated string or "*"
+origins_raw = getattr(settings, "MCP_CORS_ALLOW_ORIGINS", "*")
+origins_list = (
+    [o.strip() for o in origins_raw.split(",") if o.strip()]
+    if isinstance(origins_raw, str)
+    else ["*"]
+)
+
+# If wildcard is present, disable credentials to avoid ValueError
+contains_wildcard = any(o == "*" for o in origins_list)
+cors_allow_credentials = not contains_wildcard
+cors_allow_origins = ["*"] if contains_wildcard else origins_list
+
+if contains_wildcard:
+    logger.info(
+        "CORS configured with wildcard origins; disabling credentials for safety"
+    )
+else:
+    logger.info(f"CORS allowed origins: {cors_allow_origins}; credentials enabled")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_allow_origins,
+    allow_credentials=cors_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

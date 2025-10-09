@@ -22,11 +22,6 @@ class Settings(BaseSettings):
     # API authentication for our FastAPI service (do NOT reuse provider keys)
     API_AUTH_TOKEN: Optional[str] = None
 
-    # Google Cloud (optional provider)
-    GOOGLE_PROJECT_ID: Optional[str] = None
-    GOOGLE_LOCATION: Optional[str] = "us-central1"
-    GOOGLE_SERVICE_ACCOUNT_JSON: Optional[str] = None  # Path to service account JSON
-
     # Google AI (API key-based Gemini Image API)
     GOOGLE_AI_API_KEY: Optional[str] = None
     GOOGLE_AI_IMAGE_MODEL: str = "gemini-2.5-flash-image"
@@ -88,11 +83,13 @@ class Settings(BaseSettings):
 
     # Slack webhook (optional)
     SLACK_WEBHOOK_URL: Optional[str] = None
-    
+
     # MCP Server Configuration
     MCP_SERVER_URL: str = "http://localhost:8001"
     MCP_SERVER_HOST: str = "0.0.0.0"
     MCP_SERVER_PORT: int = 8001
+    # Comma-separated list of allowed origins for MCP server CORS; use "*" for any
+    MCP_CORS_ALLOW_ORIGINS: str = "*"
 
     model_config = SettingsConfigDict(
         env_file=".env",

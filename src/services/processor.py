@@ -7,6 +7,7 @@ Handles all post-generation image manipulation including:
 """
 
 import io
+from pathlib import Path
 from typing import Optional, Tuple
 
 from PIL import Image, ImageDraw, ImageFont
@@ -31,6 +32,24 @@ class ImageProcessor:
         """
         self.font_path = font_path
         logger.info("Image Processor initialized")
+
+    def _find_default_font_path(self) -> Optional[str]:
+        """Attempt to locate a font within the project assets.
+
+        Search order:
+        1. /app/assets/fonts (inside container)
+        2. assets/fonts (local/dev)
+        Returns first matching .ttf/.otf/.ttc.
+        """
+        search_roots = [Path("/app/assets/fonts"), Path("assets/fonts")]
+        for root in search_roots:
+            if root.exists() and root.is_dir():
+                candidates = []
+                for pattern in ("*.ttf", "*.otf", "*.ttc"):
+                    candidates.extend(sorted(root.glob(pattern)))
+                if candidates:
+                    return str(candidates[0])
+        return None
 
     def resize(self, image_data: bytes, target_width: int, target_height: int) -> bytes:
         """Resize image to target dimensions with aspect ratio preservation
@@ -128,17 +147,37 @@ class ImageProcessor:
             if self.font_path:
                 font = ImageFont.truetype(self.font_path, font_size)
             else:
-                # Try common system fonts
-                try:
-                    font = ImageFont.truetype("arial.ttf", font_size)
-                except Exception:
+                autodetected = self._find_default_font_path()
+                if autodetected:
                     try:
-                        font = ImageFont.truetype(
-                            "/System/Library/Fonts/Helvetica.ttc", font_size
-                        )
+                        logger.info(f"Using font: {autodetected}")
+                        font = ImageFont.truetype(autodetected, font_size)
                     except Exception:
-                        logger.warning("Could not load custom font, using default")
-                        font = ImageFont.load_default()
+                        # Fall back to system fonts if autodetected fails
+                        try:
+                            font = ImageFont.truetype("arial.ttf", font_size)
+                        except Exception:
+                            try:
+                                font = ImageFont.truetype(
+                                    "/System/Library/Fonts/Helvetica.ttc", font_size
+                                )
+                            except Exception:
+                                logger.warning(
+                                    "Could not load custom font, using default"
+                                )
+                                font = ImageFont.load_default()
+                else:
+                    # Try common system fonts
+                    try:
+                        font = ImageFont.truetype("arial.ttf", font_size)
+                    except Exception:
+                        try:
+                            font = ImageFont.truetype(
+                                "/System/Library/Fonts/Helvetica.ttc", font_size
+                            )
+                        except Exception:
+                            logger.warning("Could not load custom font, using default")
+                            font = ImageFont.load_default()
         except Exception as e:
             logger.warning(f"Font loading failed: {e}, using default")
             font = ImageFont.load_default()
