@@ -20,8 +20,7 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 
 ## 📋 Table of Contents
 
-- [Quick Start](#quick-start)
-  - [Docker Usage](#docker-usage-recommended)
+- [Quick Start - Commands to run the pipeline](#quick-start)
 - [Testing the Monitoring Agent](#testing-the-monitoring-agent)
 - [Architecture](#architecture)
 - [Design Decisions](#design-decisions)
@@ -47,7 +46,7 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 
 **Output:** Assets saved to `outputs/{campaign_id}/{product_id}/{aspect_ratio}/`
 
-### Docker Usage (Recommended)
+### Docker Usage
 
 For production-like environments with all services:
 
@@ -171,11 +170,13 @@ Invoke-RestMethod -Method Post `
   -Body '{"campaign_id":"demo-monitor-001"}'
 ```
 
+**4. Test alerts (Expected email output below):**
+
 ```bash
 docker compose exec mcp-server uv run -m src.cli alerts --text
 ```
 
-**4. Observe agent behavior:**
+**5. Observe agent behavior:**
 
 The agent polls every 60 seconds and will:
 
@@ -211,7 +212,7 @@ The LLM makes function calls like:
 }
 ```
 
-**6. Expected Alert Output:**
+**7. Expected Alert Output:**
 
 ```text
 Subject: ⚠️ Campaign Errors Detected – Demo Monitoring Campaign
@@ -241,7 +242,7 @@ Best regards,
 Creative Automation Agent
 ```
 
-**7. Check agent status:**
+**8. Check agent status:**
 
 ```bash
 curl http://localhost:8000/agent/status
@@ -454,7 +455,7 @@ sequenceDiagram
 
 ---
 
-## 📦 Examples
+## Examples
 
 ### Campaign Brief Structure
 
@@ -483,7 +484,7 @@ sequenceDiagram
 
 **Sample Briefs:**
 
-- `examples/brief_single_product.json` - 2 products
+- `examples/brief_single_product.json` - 1 product
 - `examples/brief_multi_product.json` - 3 products
 
 ### Output Structure
@@ -530,16 +531,23 @@ outputs/
 
 ## Design Decisions
 
-### 1. Multi-Provider GenAI Strategy
+### 1. Multi-Provider Image Generation Service
 
-**Decision:** Support both OpenAI and Google Gemini with runtime switching
-Adobe Firefly was also considered but I do not have an enterprise license for it.
+Image generation service considered:
+
+- Adobe Firefly
+- Google Gemini (gemini-2.5-flash-image)
+- OpenAI (DALL-E 3, gpt-image-1, gpt-image-1-mini)
+
+Adobe Firefly was preferred but I do not have an enterprise license for it.
+
+**Decision:** Support both OpenAI and Google Gemini with runtime switching through API endpoint /select-model and CLI questionary.
 
 **Rationale:**
 
 - **Vendor resilience:** Avoid single-provider dependency; fallback during outages or rate limits
 - **Cost optimization:** Google Gemini 40% cheaper for certain use cases ($0.04 vs $0.08 per image)
-- **Quality tradeoffs:** OpenAI excels at photorealistic imagery; Gemini faster for stylized content
+- **Quality tradeoffs:** OpenAI excels at photorealistic imagery; Gemini faster for styled content
 
 **Implementation:**
 
