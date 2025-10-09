@@ -4,11 +4,11 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 
 ## Overview
 
-**Tech Stack:** Python 3.11+ | FastAPI | Celery | Redis | SQLite | OpenAI/Google Gemini | Pillow | Docker
+**Tech Stack:** Python 3.11+ | FastAPI | Pydantic | Celery | Redis | SQLite | OpenAI/Google Gemini | Pillow | Docker | MCP
 
 **Key Capabilities:**
 
-- Multi-provider GenAI with runtime switching (OpenAI DALL-E, Google Gemini)
+- Multi-provider GenAI with runtime switching (OpenAI, Gemini)
 - Multi aspect ratio asset generation (1x1, 9x16, 16x9)
 - Dual processing modes: synchronous (low-latency) and asynchronous (high-throughput)
 - Smart asset reuse with database-backed tracking
@@ -21,8 +21,14 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 ## 📋 Table of Contents
 
 - [Quick Start - Commands to run the pipeline](#quick-start)
-- [Testing the Monitoring Agent](#testing-the-monitoring-agent)
+  - [Prerequisites](#prerequisites)
+  - [Configure environment variables](#configure-environment-variables)
+  - [Docker deployment](#docker-deployment)
+  - [Run pipeline and test the API](#run-pipeline-and-test-the-api)
+  - [Change image generation model](#change-image-generation-model)
+  - [AI Monitoring Agent](#ai-monitoring-agent)
 - [Architecture](#architecture)
+- [Examples](#examples)
 - [Design Decisions](#design-decisions)
 - [Technical Highlights](#technical-highlights)
 - [API Reference](#api-reference)
@@ -46,18 +52,22 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 
 **Output:** Assets saved to `outputs/{campaign_id}/{product_id}/{aspect_ratio}/`
 
-### Docker Usage
-
-For production-like environments with all services:
+### Configure environment variables
 
 ```bash
-# 1. Configure environment
+# TODO: Add OPENAI_API_KEY and GOOGLE_AI_API_KEY to .env
 cp .env.example .env
-# Add OPENAI_API_KEY and API_AUTH_TOKEN to .env
-
-# 2. Start all services (API + Redis + Workers + Agent + MCP)
-docker-compose up -d --build
 ```
+
+### Docker deployment
+
+Start up Docker Desktop and start all services (API + Redis + Workers + Agent + MCP)
+
+```bash
+docker compose up -d --build
+```
+
+### Run pipeline and test the API
 
 **Bash:**
 
@@ -77,10 +87,11 @@ curl -X POST http://localhost:8000/campaigns/jobs \
   -H "Content-Type: application/json" \
   -H "X-API-Key: dev-token-123" \
   --data @examples/brief_multi_product.json
+```
 
+```bash
 # Poll job status
-curl http://localhost:8000/campaigns/jobs/{job_id} \
-  -H "X-API-Key: dev-token-123"
+curl http://localhost:8000/campaigns/jobs/{replace_with_job_id} -H "X-API-Key: dev-token-123"
 ```
 
 **PowerShell:**
@@ -88,7 +99,7 @@ curl http://localhost:8000/campaigns/jobs/{job_id} \
 ```powershell
 # Synchronous processing (blocks until complete)
 $headers = @{ 'X-API-Key' = 'dev-token-123' }   # omit if API_AUTH_TOKEN is not set
-$body    = Get-Content -Raw .\examples\brief_multi_product.json
+$body    = Get-Content -Raw .\examples\brief_single_product.json
 Invoke-RestMethod -Method Post `
   -Uri http://localhost:8000/campaigns/process `
   -Headers $headers `
@@ -96,7 +107,6 @@ Invoke-RestMethod -Method Post `
   -Body $body
 
 # Asynchronous processing (returns job ID immediately)
-Asynchronous processing (returns job ID immediately)
 $headers = @{ 'X-API-Key' = 'dev-token-123' }
 $body    = Get-Content -Raw .\examples\brief_multi_product.json
 $job = Invoke-RestMethod -Method Post `
@@ -110,20 +120,26 @@ $job
 Invoke-RestMethod -Uri ("http://localhost:8000/campaigns/jobs/{0}" -f $job.job_id) -Headers $headers
 ```
 
-```bash
-# Optional: Scale workers for high volume
-docker-compose up -d --scale worker=5
+### Change image generation model
 
-# Optional: View logs
-docker-compose logs -f worker
-docker-compose logs -f agent
+```bash
+curl -X POST http://localhost:8000/select-model \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "openai", "model": "gpt-image-1-mini"}'
 ```
 
-## Testing the Monitoring Agent
+```powershell
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8000/select-model `
+  -ContentType 'application/json' `
+  -Body '{"provider": "openai", "model": "gpt-image-1-mini"}'
+```
+
+### AI Monitoring Agent
 
 The AI monitoring agent demonstrates autonomous SLA tracking and intelligent alert generation using LLM tool calling via Model Context Protocol.
 
-### Purpose
+#### Purpose
 
 Shows how the agent:
 
@@ -132,7 +148,7 @@ Shows how the agent:
 3. Uses MCP tools to gather contextual campaign data
 4. Generates professional, actionable email alerts via LLM
 
-### Step-by-Step Testing
+#### Step-by-Step Testing
 
 **1. Seed a demo campaign with intentional issues:**
 
@@ -149,7 +165,7 @@ This creates campaign `demo-monitor-001` with:
 **2. Start the monitoring agent:**
 
 ```bash
-docker-compose logs -f agent
+docker compose logs -f agent
 ```
 
 **3. Test MCP server:**
@@ -415,7 +431,7 @@ sequenceDiagram
     participant Agent as Monitor Agent
     participant DB as Database
     participant MCP as MCP Server
-    participant LLM as GPT-5-nano
+    participant LLM as LLM
     participant Email as SMTP/Slack
 
     loop Every 60 seconds
@@ -627,7 +643,7 @@ flowchart LR
 
 ```bash
 # Handle 100 concurrent campaigns
-docker-compose up -d --scale worker=20
+docker compose up -d --scale worker=20
 
 # Each worker processes 1 campaign (3 products × 3 ratios = 9 images)
 # Total throughput: 180 images/minute (assuming 30s/image)
@@ -798,12 +814,12 @@ CREATE TABLE errors (
 
 ### Current Capabilities (v1.0)
 
-- ✅ Multi-provider GenAI (OpenAI, Google)
 - ✅ 3 aspect ratio generation (1x1, 9x16, 16x9)
 - ✅ Text overlay with customizable styling
 - ✅ Asset reuse mechanism
 - ✅ REST API (sync + async endpoints)
 - ✅ Database campaign tracking
+- ✅ Interactive CLI tool
 - ✅ Docker Compose deployment
 - ✅ Comprehensive test suite
 - ✅ AI Monitoring Agent
@@ -811,14 +827,14 @@ CREATE TABLE errors (
 
 ### Stretch Goals Completed ✨
 
-- ✅ Interactive CLI tool
+- ✅ Multi-provider image and textgeneration (OpenAI, Google)
 - ✅ Queue-based background processing
 - ✅ Multi-Channel Delivery - SMTP email and Slack webhooks
 - ✅ MCP Server - Dynamic tool calling for alert generation + Separate service for campaign data access
 
 ### Future Enhancements (v2.0)
 
-- [ ] Cloud storage (S3, Azure Blob)
+- [ ] Cloud storage (AWS S3 bucket, Azure Blob)
 - [ ] Advanced brand compliance checks (ML-based logo detection) (only done brand colour match)
 - [ ] Video asset generation
 - [ ] A/B testing recommendations
