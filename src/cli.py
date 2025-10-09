@@ -270,6 +270,23 @@ Examples:
         help=f"SLA threshold in minutes (default: {settings.AGENT_SLA_THRESHOLD_MINUTES})",
     )
 
+    # MCP Server command
+    mcp_parser = subparsers.add_parser(
+        "mcp-server",
+        help="Run MCP server for agent tools",
+        epilog="""
+Examples:
+  uv run -m src.cli mcp-server
+  uv run -m src.cli mcp-server --host 127.0.0.1 --port 8002
+        """,
+    )
+    mcp_parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind MCP server (default: 0.0.0.0)"
+    )
+    mcp_parser.add_argument(
+        "--port", type=int, default=8001, help="Port to bind MCP server (default: 8001)"
+    )
+
     # Alerts command
     alerts_parser = subparsers.add_parser(
         "alerts",
@@ -364,6 +381,17 @@ Examples:
 
         elif args.command == "monitor":
             asyncio.run(run_monitoring_agent(args.interval, args.sla_threshold))
+
+        elif args.command == "mcp-server":
+            import uvicorn
+
+            from src.mcp.server import app as mcp_app
+
+            host = args.host or getattr(settings, "MCP_SERVER_HOST", "0.0.0.0")
+            port = args.port or getattr(settings, "MCP_SERVER_PORT", 8001)
+
+            logger.info(f"Starting MCP server on {host}:{port}")
+            uvicorn.run(mcp_app, host=host, port=port)
         elif args.command == "alerts":
             db = Database()
             alert = db.get_latest_alert(args.campaign)
@@ -389,10 +417,16 @@ Examples:
                     campaign = db.get_campaign(alert.campaign_id)
                     if campaign is None:
                         return alert.email_content
-                    ctx = await build_alert_context(
+                    # Build context (kept for potential future display or debugging)
+                    await build_alert_context(
                         campaign=campaign, issue_type=alert.issue_type, context={}
                     )
-                    return await generate_alert_email(ctx)
+                    # Generate email using MCP-enabled signature
+                    return await generate_alert_email(
+                        campaign_id=alert.campaign_id,
+                        issue_type=alert.issue_type,
+                        context={},
+                    )
 
                 email_text = asyncio.run(_render_email_text())
                 print(email_text)

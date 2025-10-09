@@ -5,10 +5,10 @@ pydantic-settings==2.5.2
 uvicorn==0.32.0
 
 # HTTP Client
-httpx==0.27.2
+httpx==0.28.1
 
 # OpenAI SDK
-openai>=1.68.0,<2.0.0
+openai==2.2.0
 
 # Image Processing
 Pillow==11.0.0
@@ -40,3 +40,6 @@ questionary==2.0.1
 
 # Google Gemini SDK for text generation
 google-genai==1.42.0
+
+# MCP Server Integration
+fastapi-mcp==0.4.0

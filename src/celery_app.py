@@ -2,6 +2,7 @@
 
 This module wires Celery to Redis for broker and result backend.
 """
+
 from __future__ import annotations
 
 from celery import Celery
@@ -25,6 +26,8 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_always_eager=False,
+    # Celery 5.x-compatible broker retry behavior
+    broker_connection_retry=True,
 )
 
 # Ensure tasks are registered when the worker imports this module
