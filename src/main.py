@@ -7,7 +7,9 @@ reuse the existing pipeline services.
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
@@ -15,6 +17,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from src.celery_app import celery_app
+from src.db.database import Database
 from src.models.brief import ASPECT_RATIOS, CampaignBrief
 from src.services.genai import GenAIOrchestrator
 from src.services.google_image_client import GoogleImageClient
@@ -25,6 +28,11 @@ from src.services.variant_generation import generate_variant
 from src.tasks import process_campaign_task
 from src.utils.config import runtime_config, settings
 from src.utils.logger import get_logger
+
+try:
+    import redis.asyncio as aioredis  # type: ignore
+except Exception:  # pragma: no cover
+    aioredis = None  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -67,6 +75,54 @@ class ModelSelectionResponse(BaseModel):
     provider: str
     model: str
     message: str = "Model configuration updated successfully"
+
+
+class AgentStatusResponse(BaseModel):
+    status: str
+    last_heartbeat: str | None = None
+    last_check_started_at: str | None = None
+    last_check_finished_at: str | None = None
+    last_active_campaigns: int | None = None
+    check_interval: int | None = None
+    sla_threshold_minutes: int | None = None
+
+
+@app.get("/agent/status", response_model=AgentStatusResponse)
+async def agent_status() -> AgentStatusResponse:
+    """Return status of the monitoring agent based on Redis heartbeat.
+
+    This endpoint is read-only and does not attempt to start/stop the agent.
+    """
+    # If no Redis client is available or URL not configured, report unknown
+    if aioredis is None or not getattr(settings, "REDIS_URL", None):
+        return AgentStatusResponse(status="unknown")
+
+    try:
+        redis = aioredis.from_url(settings.REDIS_URL)
+        raw = await redis.get("agent:heartbeat")
+        await redis.aclose()
+    except Exception:
+        # Redis unreachable
+        return AgentStatusResponse(status="unknown")
+
+    if not raw:
+        # No recent heartbeat key
+        return AgentStatusResponse(status="stopped")
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        data = {}
+
+    return AgentStatusResponse(
+        status=str(data.get("status") or "running"),
+        last_heartbeat=str(data.get("ts")),
+        last_check_started_at=str(data.get("last_check_started_at")),
+        last_check_finished_at=str(data.get("last_check_finished_at")),
+        last_active_campaigns=data.get("last_active_campaigns"),
+        check_interval=data.get("check_interval"),
+        sla_threshold_minutes=data.get("sla_threshold_minutes"),
+    )
 
 
 # -----------------------
@@ -146,8 +202,12 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     # Validate and instantiate only the required client(s) based on provider
     openai_client: OpenAIImageClient | None = None
     google_client: GoogleImageClient | None = None
+    db: Database | None = None
 
     try:
+        # Initialize database
+        db = Database()
+
         if provider == "openai":
             if not settings.OPENAI_API_KEY:
                 raise HTTPException(
@@ -170,6 +230,20 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         )
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
+
+        # Create campaign record in database
+        product_ids = [p.id for p in brief.products]
+        db.create_campaign(
+            campaign_id=brief.campaign_id,
+            name=getattr(brief, "name", None) or brief.campaign_id,
+            product_ids=product_ids,
+            target_market=brief.target_market,
+            target_audience=brief.target_audience,
+            campaign_message=brief.campaign_message,
+            status="processing",
+        )
+        logger.info(f"Campaign record created: {brief.campaign_id}")
+
     except HTTPException:
         raise
     except Exception as e:  # pragma: no cover - defensive
@@ -180,11 +254,12 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
 
     total_variants = 0
     total_reused = 0
+    total_errors = 0
     results: List[VariantResult] = []
 
     # Build tasks across all products/ratios
     async def _run_for_product(product):
-        nonlocal total_variants, total_reused, results
+        nonlocal total_variants, total_reused, total_errors, results
         tasks = []
         ratios = list(ASPECT_RATIOS)
         for ratio in ratios:
@@ -198,6 +273,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
                     ratio=ratio,
                     providers_to_try=[runtime_config.provider],
                     models_to_try=[runtime_config.model],
+                    database=db,  # Pass database connection
                 )
             )
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -208,6 +284,19 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
                     product.id,
                     result,
                 )
+                total_errors += 1
+                # Log error to database
+                if db:
+                    try:
+                        db.create_error(
+                            campaign_id=brief.campaign_id,
+                            product_id=product.id,
+                            error_type="generation_failure",
+                            error_message=str(result)[:500],
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to log error to database: {e}")
+
                 results.append(
                     VariantResult(
                         product_id=product.id,
@@ -235,6 +324,19 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     try:
         await asyncio.gather(*[_run_for_product(product) for product in brief.products])
     finally:
+        # Update campaign status
+        if db:
+            try:
+                if total_errors == 0:
+                    db.update_campaign_status(brief.campaign_id, "completed")
+                else:
+                    db.update_campaign_status(brief.campaign_id, "failed")
+            except Exception as e:
+                logger.error(f"Failed to update campaign status: {e}")
+
+            # Close database connection
+            db.close()
+
         # Ensure all instantiated clients are properly closed
         if openai_client is not None:
             await openai_client.close()
@@ -334,6 +436,7 @@ async def _generate_variant(
     ratio,
     providers_to_try: List[str] | None = None,
     models_to_try: List[str] | None = None,
+    database: Database | None = None,
 ) -> Dict[str, Any]:
     return await generate_variant(
         orchestrator=orchestrator,
@@ -345,4 +448,5 @@ async def _generate_variant(
         providers_to_try=providers_to_try,
         models_to_try=models_to_try,
         offload_blocking=True,
+        database=database,
     )
