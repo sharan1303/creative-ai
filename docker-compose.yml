@@ -34,3 +34,18 @@ services:
     working_dir: /app
     command: ["celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel", "INFO"]
 
+  agent:
+    build: .
+    container_name: creative-ai-agent
+    volumes:
+      - ./:/app
+      - ./outputs:/app/outputs
+      - ./assets:/app/assets
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    working_dir: /app
+    command: ["uv", "run", "-m", "src.cli", "monitor"]
+    restart: unless-stopped
+

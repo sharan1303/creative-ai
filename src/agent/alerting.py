@@ -1,6 +1,8 @@
 """
 Alert delivery system for email and Slack notifications.
 """
+
+import asyncio
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -35,7 +37,7 @@ async def deliver_alert(email_content: str, campaign: Campaign, context: AlertCo
         try:
             await _send_email(
                 to=recipient,
-                subject=f"⚠️ Asset Generation Delay – {campaign.name or campaign.id}",
+                subject=f"⚠️ Asset Generation Delay - {campaign.name or campaign.id}",
                 body=email_content,
                 priority="medium",
             )
@@ -125,14 +127,26 @@ async def _send_email(to: str, subject: str, body: str, priority: str = "normal"
     part = MIMEText(body, "plain")
     msg.attach(part)
 
-    # Send email
-    with smtplib.SMTP(smtp_host, smtp_port) as server:
-        server.starttls()
-        if smtp_user and smtp_password:
-            server.login(smtp_user, smtp_password)
-        server.send_message(msg)
+    # Send email using a background thread to avoid blocking the event loop
+    timeout_seconds = float(getattr(settings, "SMTP_TIMEOUT", 10.0))
+    loop = asyncio.get_running_loop()
 
-    logger.debug(f"Email sent to {to} via {smtp_host}:{smtp_port}")
+    def _send_blocking():
+        # All network I/O happens in this thread
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=timeout_seconds) as server:
+            server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(msg)
+
+    try:
+        await loop.run_in_executor(None, _send_blocking)
+        logger.debug(f"Email sent to {to} via {smtp_host}:{smtp_port}")
+    except Exception as exc:
+        logger.exception(
+            f"SMTP email send failed to {to} via {smtp_host}:{smtp_port}: {exc}"
+        )
+        raise
 
 
 async def _post_to_slack(
