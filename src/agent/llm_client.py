@@ -1,7 +1,13 @@
 """
-LLM client for generating human-readable alerts using OpenAI Responses API.
+LLM client for generating human-readable alerts (OpenAI or Google Gemini).
+
+Provider/model are configured via environment:
+- AGENT_LLM_PROVIDER: "openai" | "google"
+- AGENT_LLM_MODEL: optional explicit model override
+- AGENT_LLM_MODEL_OPENAI / AGENT_LLM_MODEL_GOOGLE: provider defaults
 """
 
+from google import genai
 from openai import AsyncOpenAI
 
 from src.agent.models import AlertContext
@@ -53,63 +59,31 @@ async def generate_alert_email(context: AlertContext) -> str:
     Returns:
         Formatted email content
     """
-    # If no API key configured or provider set to mock, use fallback
-    if not settings.OPENAI_API_KEY or getattr(settings, "GENAI_PROVIDER", "") == "mock":
-        logger.warning(
-            "OPENAI_API_KEY not set or mock provider selected; using mock email content"
-        )
-        return _generate_mock_email(context)
+    # Resolve provider and model
+    provider = (getattr(settings, "AGENT_LLM_PROVIDER", "openai") or "openai").lower()
+    model = _resolve_agent_model(provider)
 
     # Format context as natural language prompt
     user_prompt = _format_context_prompt(context)
 
-    # Call OpenAI Responses API with graceful fallback on error
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-
+    # Route to provider-specific implementation
     try:
-        response = await client.responses.create(
-            model=getattr(settings, "AGENT_LLM_MODEL", "gpt-5-mini"),
-            input=[
-                {
-                    "role": "developer",
-                    "content": [
-                        {"type": "input_text", "text": SYSTEM_PROMPT},
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": user_prompt},
-                    ],
-                },
-            ],
-            reasoning={"effort": "medium"},
-            text={"verbosity": "medium"},
-            max_output_tokens=800,
-        )
+        if provider == "openai":
+            # Require key
+            if not (settings.OPENAI_API_KEY or "").strip():
+                raise ValueError("OPENAI_API_KEY not set for OpenAI provider")
+            return await _generate_with_openai(user_prompt=user_prompt, model=model)
 
-        # Prefer unified text accessor if available
-        email_content = getattr(response, "output_text", None)
-        if not email_content:
-            # Fallback to choices/message format if SDK version lacks output_text
-            try:
-                email_content = response.choices[0].message.content
-            except Exception:
-                # Last-resort string conversion
-                email_content = str(response)
+        if provider == "google":
+            if not (getattr(settings, "GOOGLE_AI_API_KEY", None) or "").strip():
+                raise ValueError("GOOGLE_AI_API_KEY not set for Google provider")
+            return await _generate_with_google(user_prompt=user_prompt, model=model)
 
-        logger.info(
-            f"Generated alert email: {len(email_content)} chars, "
-            f"tokens={getattr(getattr(response, 'usage', None), 'total_tokens', 'n/a')}"
-        )
-
-        return email_content
-
+        logger.warning(f"Unknown AGENT_LLM_PROVIDER '{provider}'")
+        raise ValueError(f"Unknown AGENT_LLM_PROVIDER '{provider}'")
     except Exception as e:
-        logger.warning(
-            f"Responses API failed ({e}); returning mock email content instead"
-        )
-        return _generate_mock_email(context)
+        logger.warning(f"LLM generation failed: {e}", exc_info=True)
+        raise
 
 
 def _format_context_prompt(context: AlertContext) -> str:
@@ -169,43 +143,81 @@ Include:
     return prompt
 
 
-def _generate_mock_email(context: AlertContext) -> str:
-    """Generate a simple deterministic email without calling external APIs.
+def _resolve_agent_model(provider: str) -> str:
+    """Resolve the model to use for the agent based on provider and settings.
 
-    Used when OPENAI_API_KEY is not configured or mock provider is selected.
+    Order:
+    1) AGENT_LLM_MODEL if provided
+    2) Provider-specific default
     """
-    campaign = context.campaign
-    lines = [
-        f"Subject: {context.issue_type.replace('_', ' ').title()} – {campaign.campaign_name}",
-        "",
-        "Hi Creative Lead,",
-        "",
-        f"We detected an issue for campaign '{campaign.campaign_name}' (ID: {campaign.campaign_id}).",
-        f"- Market: {campaign.target_market}",
-        f"- Elapsed: {campaign.elapsed_time}",
-    ]
+    explicit = getattr(settings, "AGENT_LLM_MODEL", None)
+    if explicit and explicit.strip():
+        return explicit.strip()
+    if provider == "google":
+        return getattr(settings, "AGENT_LLM_MODEL_GOOGLE", "gemini-2.5-flash")
+    # default to OpenAI
+    return getattr(settings, "AGENT_LLM_MODEL_OPENAI", "gpt-5-nano")
 
-    if context.issue_type == "insufficient_variants":
-        lines.append("- Not all required variants are generated yet.")
-    elif context.issue_type == "repeated_failures":
-        lines.append(f"- {len(context.errors)} recent errors observed.")
 
-    if context.errors:
-        lines.append("")
-        lines.append("Recent errors:")
-        for e in context.errors:
-            lines.append(f"- [{e.timestamp}] {e.type}: {e.message}")
+async def _generate_with_openai(*, user_prompt: str, model: str) -> str:
+    """Call OpenAI Responses API to generate the alert email text."""
+    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-    lines.extend(
-        [
-            "",
-            "Next steps:",
-            "1) The automation will continue generation attempts.",
-            "2) If this persists for 30 minutes, we will escalate.",
-            "",
-            "Best regards,",
-            "Creative Automation Agent",
-        ]
+    response = await client.responses.create(
+        model=model,
+        input=[
+            {
+                "role": "developer",
+                "content": [
+                    {"type": "input_text", "text": SYSTEM_PROMPT},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": user_prompt},
+                ],
+            },
+        ],
+        reasoning={"effort": "medium"},
+        text={"verbosity": "medium"},
+        max_output_tokens=800,
     )
 
-    return "\n".join(lines)
+    email_content = getattr(response, "output_text", None)
+    if not email_content:
+        try:
+            email_content = response.choices[0].message.content
+        except Exception:
+            email_content = str(response)
+
+    logger.info(
+        f"Generated alert email (openai/{model}): {len(email_content)} chars, "
+        f"tokens={getattr(getattr(response, 'usage', None), 'total_tokens', 'n/a')}"
+    )
+    return email_content
+
+
+async def _generate_with_google(*, user_prompt: str, model: str) -> str:
+    """Generate alert text using the official google-genai SDK (async)."""
+    api_key = (getattr(settings, "GOOGLE_AI_API_KEY", "") or "").strip()
+    if not api_key:
+        raise ValueError("GOOGLE_AI_API_KEY is required for Google provider")
+
+    # Use async client from google-genai; ensure cleanup after request
+    client = genai.Client(api_key=api_key)
+    aclient = client.aio
+    try:
+        response = await aclient.models.generate_content(
+            model=model,
+            contents=f"{SYSTEM_PROMPT}\n\n{user_prompt}",
+        )
+    finally:
+        await aclient.aclose()
+
+    text = getattr(response, "text", None) or str(response)
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("Gemini SDK returned empty text")
+
+    logger.info(f"Generated alert email (google/{model}): {len(text)} chars")
+    return text

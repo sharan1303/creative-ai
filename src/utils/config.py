@@ -51,20 +51,30 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
 
     # Provider selection and fallback chain
-    GENAI_PROVIDER: str = "openai"  # Primary: openai | google 
-    GENAI_FALLBACKS: str = "google"  # Comma-separated fallback order
+    GENAI_PROVIDER: str = "google"
+    GENAI_FALLBACKS: str = "openai"
 
     # Model selection per provider
-    OPENAI_DEFAULT_MODEL: str = "gpt-image-1"  # Options: dall-e-3, gpt-image-1, gpt-image-1-mini
+    OPENAI_DEFAULT_MODEL: str = (
+        "gpt-image-1"  # Options: dall-e-3, gpt-image-1, gpt-image-1-mini
+    )
     GOOGLE_DEFAULT_MODEL: str = "gemini-2.5-flash-image"  # Google AI model
 
     # Image generation settings
-    DEFAULT_IMAGE_QUALITY: str = "low"  # Options: standard | hd (OpenAI), low/medium/high/auto (gpt-image)
+    DEFAULT_IMAGE_QUALITY: str = (
+        "low"  # Options: standard | hd (OpenAI), low/medium/high/auto (gpt-image)
+    )
     DEFAULT_IMAGE_WIDTH: int = 1024  # Default image width
     DEFAULT_IMAGE_HEIGHT: int = 1024  # Default image height
 
-    # Agent monitoring settings
-    AGENT_LLM_MODEL: str = "gpt-5-mini"  # Model for alert generation
+    # Agent monitoring settings (LLM for alert generation)
+    # Provider can be switched between "openai" and "google"
+    AGENT_LLM_PROVIDER: str = "google"
+    # Optional explicit model override; if not set, a provider-specific default is used
+    AGENT_LLM_MODEL: Optional[str] = None
+    # Provider-specific defaults used when AGENT_LLM_MODEL is not provided
+    AGENT_LLM_MODEL_OPENAI: str = "gpt-5-nano"
+    AGENT_LLM_MODEL_GOOGLE: str = "gemini-2.5-flash"
     AGENT_CHECK_INTERVAL: int = 60  # Seconds between monitoring checks
     AGENT_SLA_THRESHOLD_MINUTES: int = 10  # Minutes before SLA breach alert
 
@@ -100,7 +110,7 @@ class RuntimeConfig:
 
     def __init__(self):
         # Initialize with validated provider and aligned model
-        self._provider = "openai"
+        self._provider = "google"
         self._model = self._get_default_model_for_provider(self._provider)
         # Apply environment override via setter (validates and aligns model)
         self.provider = settings.GENAI_PROVIDER

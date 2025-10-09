@@ -7,7 +7,9 @@ reuse the existing pipeline services.
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
@@ -26,6 +28,11 @@ from src.services.variant_generation import generate_variant
 from src.tasks import process_campaign_task
 from src.utils.config import runtime_config, settings
 from src.utils.logger import get_logger
+
+try:
+    import redis.asyncio as aioredis  # type: ignore
+except Exception:  # pragma: no cover
+    aioredis = None  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -68,6 +75,54 @@ class ModelSelectionResponse(BaseModel):
     provider: str
     model: str
     message: str = "Model configuration updated successfully"
+
+
+class AgentStatusResponse(BaseModel):
+    status: str
+    last_heartbeat: str | None = None
+    last_check_started_at: str | None = None
+    last_check_finished_at: str | None = None
+    last_active_campaigns: int | None = None
+    check_interval: int | None = None
+    sla_threshold_minutes: int | None = None
+
+
+@app.get("/agent/status", response_model=AgentStatusResponse)
+async def agent_status() -> AgentStatusResponse:
+    """Return status of the monitoring agent based on Redis heartbeat.
+
+    This endpoint is read-only and does not attempt to start/stop the agent.
+    """
+    # If no Redis client is available or URL not configured, report unknown
+    if aioredis is None or not getattr(settings, "REDIS_URL", None):
+        return AgentStatusResponse(status="unknown")
+
+    try:
+        redis = aioredis.from_url(settings.REDIS_URL)
+        raw = await redis.get("agent:heartbeat")
+        await redis.aclose()
+    except Exception:
+        # Redis unreachable
+        return AgentStatusResponse(status="unknown")
+
+    if not raw:
+        # No recent heartbeat key
+        return AgentStatusResponse(status="stopped")
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        data = {}
+
+    return AgentStatusResponse(
+        status=str(data.get("status") or "running"),
+        last_heartbeat=str(data.get("ts")),
+        last_check_started_at=str(data.get("last_check_started_at")),
+        last_check_finished_at=str(data.get("last_check_finished_at")),
+        last_active_campaigns=data.get("last_active_campaigns"),
+        check_interval=data.get("check_interval"),
+        sla_threshold_minutes=data.get("sla_threshold_minutes"),
+    )
 
 
 # -----------------------

@@ -38,3 +38,5 @@ questionary==2.0.1
 # Optional: Google Cloud (Vertex AI)
 # google-cloud-aiplatform==1.38.1
 
+# Google Gemini SDK for text generation
+google-genai==1.42.0

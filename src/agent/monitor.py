@@ -5,16 +5,24 @@ This module implements the core monitoring loop that:
 1. Polls database for active campaigns
 2. Evaluates SLA compliance and variant counts
 3. Triggers AI-generated alerts for issues
+4. Emits a Redis heartbeat for external status checks
 """
 
 import asyncio
+import json
 from datetime import datetime, timedelta
 
 from src.agent.alerting import deliver_alert
 from src.agent.context import build_alert_context
 from src.agent.llm_client import generate_alert_email
 from src.db.database import Campaign, get_db
+from src.utils.config import settings
 from src.utils.logger import get_logger
+
+try:  # Prefer optional import guard to avoid hard failure in non-redis contexts
+    import redis.asyncio as aioredis  # type: ignore
+except Exception:  # pragma: no cover - defensive fallback
+    aioredis = None  # type: ignore
 
 logger = get_logger(__name__)
 
@@ -41,6 +49,19 @@ class CampaignMonitorAgent:
         self.max_concurrent = max_concurrent_checks
         self.db = get_db()
         self._running = False
+        self._last_active_campaigns: int | None = None
+        self._last_check_started_at: str | None = None
+        self._last_check_finished_at: str | None = None
+
+        # Initialize Redis client if available
+        self.redis = None
+        if aioredis is not None and getattr(settings, "REDIS_URL", None):
+            try:
+                self.redis = aioredis.from_url(settings.REDIS_URL)
+            except Exception:
+                logger.warning(
+                    "Redis client init failed; heartbeat disabled", exc_info=True
+                )
 
     async def start(self):
         """Start the monitoring agent"""
@@ -53,6 +74,7 @@ class CampaignMonitorAgent:
         self._running = True
 
         try:
+            await self._write_heartbeat(status="starting")
             await self.run()
         except KeyboardInterrupt:
             logger.info("Agent stopped by user")
@@ -72,18 +94,22 @@ class CampaignMonitorAgent:
         """Clean up resources"""
         logger.info("Cleaning up agent resources...")
         self.db.close()
+        await self._write_heartbeat(status="stopped")
 
     async def run(self):
         """Main monitoring loop"""
         while self._running:
             try:
                 start_time = datetime.now()
+                self._last_check_started_at = start_time.isoformat()
 
                 # Check all active campaigns
                 await self.check_all_campaigns()
 
                 # Calculate next cycle
                 elapsed = (datetime.now() - start_time).total_seconds()
+                self._last_check_finished_at = datetime.now().isoformat()
+                await self._write_heartbeat(status="running")
                 sleep_time = max(0, self.check_interval - elapsed)
 
                 logger.debug(
@@ -101,9 +127,11 @@ class CampaignMonitorAgent:
 
         if not active_campaigns:
             logger.debug("No active campaigns to monitor")
+            self._last_active_campaigns = 0
             return
 
         logger.info(f"Checking {len(active_campaigns)} active campaigns")
+        self._last_active_campaigns = len(active_campaigns)
 
         # Process campaigns in batches to limit concurrency
         tasks = [self.check_campaign(campaign) for campaign in active_campaigns]
@@ -120,6 +148,30 @@ class CampaignMonitorAgent:
                         f"Error checking campaign {campaign_id}: {result}",
                         exc_info=result,
                     )
+
+    async def _write_heartbeat(self, status: str = "running") -> None:
+        """Write a heartbeat record to Redis for external status checks."""
+        if not self.redis:
+            return
+
+        payload = {
+            "status": status,
+            "ts": datetime.now().isoformat(),
+            "check_interval": self.check_interval,
+            "sla_threshold_minutes": int(self.sla_threshold.total_seconds() // 60),
+            "last_check_started_at": self._last_check_started_at,
+            "last_check_finished_at": self._last_check_finished_at,
+            "last_active_campaigns": self._last_active_campaigns,
+        }
+
+        try:
+            # Expire slightly after two intervals to mark stale if agent halts
+            expire_seconds = max(self.check_interval * 2, 30)
+            await self.redis.set(
+                "agent:heartbeat", json.dumps(payload), ex=expire_seconds
+            )
+        except Exception:
+            logger.debug("Failed to write heartbeat to Redis", exc_info=True)
 
     async def check_campaign(self, campaign: Campaign):
         """
