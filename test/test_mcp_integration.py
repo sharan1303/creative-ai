@@ -6,10 +6,6 @@ import os
 import sys
 
 from src.utils.config import settings
-
-# Add src to path
-sys.path.insert(0, 'src')
-
 from src.agent.llm_client import generate_alert_email
 from src.utils.logger import get_logger
 
