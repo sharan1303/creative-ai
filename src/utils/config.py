@@ -17,7 +17,6 @@ class Settings(BaseSettings):
 
     # API Keys for GenAI providers
     OPENAI_API_KEY: str = ""  # Primary provider
-    HUGGINGFACE_TOKEN: Optional[str] = None  # Free fallback
 
     # API authentication for our FastAPI service (do NOT reuse provider keys)
     API_AUTH_TOKEN: Optional[str] = None
