@@ -151,6 +151,18 @@ async def select_model(request: ModelSelectionRequest) -> ModelSelectionResponse
     Returns:
         Updated model configuration
     """
+    # Validate that the required API key is configured for the selected provider
+    if request.provider == "openai" and not settings.OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=400,
+            detail="OPENAI_API_KEY not configured. Cannot select OpenAI provider.",
+        )
+    elif request.provider == "google" and not settings.GOOGLE_AI_API_KEY:
+        raise HTTPException(
+            status_code=400,
+            detail="GOOGLE_AI_API_KEY not configured. Cannot select Google provider.",
+        )
+
     try:
         runtime_config.update(request.provider, request.model)
         logger.info(
@@ -200,38 +212,83 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
 
         if provider == "openai":
             if not settings.OPENAI_API_KEY:
-                raise HTTPException(
-                    status_code=400,
-                    detail="OPENAI_API_KEY not configured for provider 'openai'",
+                logger.warning(
+                    "OPENAI_API_KEY not configured for requested provider 'openai'. "
+                    "Attempting to fall back to alternative provider."
                 )
-            openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+                # Try to fall back to Google if available
+                if settings.GOOGLE_AI_API_KEY:
+                    logger.info(
+                        "→ Automatically switching from OpenAI to Google provider due to missing API key"
+                    )
+                    google_client = GoogleImageClient()
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="OPENAI_API_KEY not configured and no alternative provider available",
+                    )
+            else:
+                openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+                logger.info(f"Initialized OpenAI client for provider '{provider}'")
         elif provider == "google":
             if not settings.GOOGLE_AI_API_KEY:
-                raise HTTPException(
-                    status_code=400,
-                    detail="GOOGLE_AI_API_KEY not configured for provider 'google'",
+                logger.warning(
+                    "GOOGLE_AI_API_KEY not configured for requested provider 'google'. "
+                    "Attempting to fall back to alternative provider."
                 )
-            google_client = GoogleImageClient()
+                # Try to fall back to OpenAI if available
+                if settings.OPENAI_API_KEY:
+                    logger.info(
+                        "→ Automatically switching from Google to OpenAI provider due to missing API key"
+                    )
+                    openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="GOOGLE_AI_API_KEY not configured and no alternative provider available",
+                    )
+            else:
+                google_client = GoogleImageClient()
+                logger.info(f"Initialized Google client for provider '{provider}'")
         else:
             raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
 
         orchestrator = GenAIOrchestrator(
             openai_client=openai_client, google_client=google_client
         )
+
+        # Log provider availability summary
+        available_providers = []
+        if openai_client:
+            available_providers.append("openai")
+        if google_client:
+            available_providers.append("google")
+        logger.info(
+            f"GenAI Orchestrator ready with providers: {available_providers}. "
+            f"Requested provider was: {provider}"
+        )
+
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
 
         product_ids = [p.id for p in brief.products]
-        db.create_campaign(
-            campaign_id=brief.campaign_id,
-            name=getattr(brief, "name", None) or brief.campaign_id,
-            product_ids=product_ids,
-            target_market=brief.target_market,
-            target_audience=brief.target_audience,
-            campaign_message=brief.campaign_message,
-            status="processing",
-        )
-        logger.info(f"Campaign record created: {brief.campaign_id}")
+        # Check if campaign already exists
+        existing_campaign = db.get_campaign(brief.campaign_id)
+        if not existing_campaign:
+            db.create_campaign(
+                campaign_id=brief.campaign_id,
+                name=getattr(brief, "name", None) or brief.campaign_id,
+                product_ids=product_ids,
+                target_market=brief.target_market,
+                target_audience=brief.target_audience,
+                campaign_message=brief.campaign_message,
+                status="processing",
+            )
+            logger.info(f"Campaign record created: {brief.campaign_id}")
+        else:
+            logger.info(
+                f"Campaign {brief.campaign_id} already exists, skipping creation"
+            )
 
     except HTTPException:
         raise
@@ -338,6 +395,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
 
 
 # Background job handling
+
 
 class JobCreateResponse(BaseModel):
     job_id: str

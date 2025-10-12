@@ -118,7 +118,7 @@ async def generate_variant(
     logger.debug(f"Prompt for {product.id}: {prompt[:100]}...")
 
     try:
-        image_data = await orchestrator.generate_image(
+        image_data, provider, model = await orchestrator.generate_image(
             prompt=prompt,
             width=ratio.width,
             height=ratio.height,
@@ -166,6 +166,8 @@ async def generate_variant(
         "target_market": brief.target_market,
         "target_audience": brief.target_audience,
         "campaign_message": brief.campaign_message,
+        "provider": provider,
+        "model": model,
         "reused": False,
     }
 

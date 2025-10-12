@@ -91,6 +91,18 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
         orchestrator = GenAIOrchestrator(
             openai_client=openai_client, google_client=google_client
         )
+
+        # Log provider availability summary
+        available_providers = []
+        if openai_client:
+            available_providers.append("openai")
+        if google_client:
+            available_providers.append("google")
+        logger.info(
+            f"[OK] GenAI Orchestrator ready with providers: {available_providers}"
+        )
+        logger.info(f"     Requested provider: {provider}, model: {model}")
+
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
         logger.info("[OK] All services initialized")
@@ -124,7 +136,7 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
     for idx, product in enumerate(brief.products, 1):
         logger.info(f"\n[{idx}/{len(brief.products)}] Processing: {product.name}")
         logger.info(f"  Product ID: {product.id}")
-        
+
         # Async aspect ratio generations
         tasks = []
         for ratio in ASPECT_RATIOS:
@@ -140,7 +152,7 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
                 database=db,
             )
             tasks.append(task)
-            
+
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for ratio, result in zip(ASPECT_RATIOS, results):
