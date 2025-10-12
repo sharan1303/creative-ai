@@ -41,7 +41,7 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 ### Prerequisites
 
 - Docker Desktop (for containerised deployment)
-- OpenAI API key (`OPENAI_API_KEY`) or Google AI API key (`GOOGLE_AI_API_KEY`)
+- OpenAI API key (`OPENAI_API_KEY`) AND Google AI API key (`GOOGLE_AI_API_KEY`)
 
 **Output:** Assets will be saved to `outputs/{campaign_id}/{product_id}/{aspect_ratio}/`
 
