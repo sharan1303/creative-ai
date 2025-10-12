@@ -287,13 +287,18 @@ outputs/
   "product_id": "prod_beach_towel_001",
   "product_name": "Premium Beach Towel",
   "aspect_ratio": "1x1",
-  "width": 1024,
-  "height": 1024,
-  "prompt": "Premium Beach Towel, Luxurious oversized...",
+  "dimensions": "1024x1024",
+  "platform": "Instagram Feed",
+  "target_market": "EU",
+  "target_audience": "Active families aged 25-45",
+  "campaign_message": "Make Waves This Summer!",
   "provider": "openai",
-  "model": "dall-e-3",
-  "generated_at": "2025-10-09T19:15:30.123456",
-  "file_path": "outputs/summer-splash-eu-2025/prod_beach_towel_001/1x1/..."
+  "model": "gpt-image-1",
+  "reused": false,
+  "file_path": "outputs/summer-splash-eu-2025/prod_beach_towel_001/1x1/...",
+  "file_size_bytes": 2586046,
+  "created_at": "2025-10-12T20:06:41.674922",
+  "checksum_md5": "6dfa7e72bac6d59d37e6eead4973ebb2"
 }
 ```
 

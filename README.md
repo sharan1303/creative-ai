@@ -24,6 +24,7 @@ AI-powered marketing creative generation system that transforms campaign briefs 
   - [Prerequisites](#prerequisites)
   - [Configure environment variables](#configure-environment-variables)
   - [Quickest way to run the pipeline](#quickest-way-to-run-the-pipeline)
+  - [Step by step guide for each command](#step-by-step-guide)
 - [Architecture](#architecture)
 - [Examples](#examples)
 - [Design Decisions](#design-decisions)
@@ -39,12 +40,10 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 
 ### Prerequisites
 
-- Python 3.11+ and [uv](https://github.com/astral-sh/uv) package manager
-- Docker + Docker Compose (for containerized deployment)
-- curl (bash) or PowerShell (Windows)
+- Docker Desktop (for containerised deployment)
 - OpenAI API key (`OPENAI_API_KEY`) or Google AI API key (`GOOGLE_AI_API_KEY`)
 
-**Output:** Assets saved to `outputs/{campaign_id}/{product_id}/{aspect_ratio}/`
+**Output:** Assets will be saved to `outputs/{campaign_id}/{product_id}/{aspect_ratio}/`
 
 ### Configure environment variables
 
@@ -55,230 +54,48 @@ cp .env.example .env
 
 ### Quickest way to run the pipeline
 
-batch file
+Start up Docker Desktop. To get all services up and running quickly, use the provided convenience scripts.
 
-### Docker deployment
+**Start services and test the API:**
 
-Start up Docker Desktop and start all services (API + Redis + Workers + Agent + MCP)
+This will build and start all Docker containers and then run a series of API tests to run the pipeline.
 
-```bash
-docker compose up -d --build
-```
-
-### Run pipeline and test the API
-
-**Bash:**
+1. It will select the OpenAI provider and model and process a single product.
+2. It will change the model to Google Gemini to asynchronously process a multi product (3) campaign and provide the job id to poll the status of the job.
 
 ```bash
-curl http://localhost:8000/health
-# {"status": "ok"}
-
-# Synchronous processing (blocks until complete)
-curl -X POST http://localhost:8000/campaigns/process \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-token-123" \
-  --data @examples/brief_single_product.json
-
-# Asynchronous processing (returns job ID immediately)
-curl -X POST http://localhost:8000/campaigns/jobs \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: dev-token-123" \
-  --data @examples/brief_multi_product.json
+bash ./scripts/start_and_test_api.sh
 ```
+
+**AI monitoring agent:**
+
+This script seeds a demo campaign with pre-defined issues and then tests the AI monitoring agent's ability to detect and report on them.
+
+1. It will detect the seeded errors immediately (>3 failures threshold)
+2. Call LLM with MCP tools to generate contextual alert
+3. It will log the alert to console and (if configured) send email/Slack notification.
 
 ```bash
-# Poll job status
-curl http://localhost:8000/campaigns/jobs/{replace_with_job_id} -H "X-API-Key: dev-token-123"
+bash ./scripts/seed_and_test_agent.sh
 ```
 
-**PowerShell:**
-
-```powershell
-# Synchronous processing (blocks until complete)
-$headers = @{ 'X-API-Key' = 'dev-token-123' }   # omit if API_AUTH_TOKEN is not set
-$body    = Get-Content -Raw .\examples\brief_single_product.json
-Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8000/campaigns/process `
-  -Headers $headers `
-  -ContentType 'application/json' `
-  -Body $body
-
-# Asynchronous processing (returns job ID immediately)
-$headers = @{ 'X-API-Key' = 'dev-token-123' }
-$body    = Get-Content -Raw .\examples\brief_multi_product.json
-$job = Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8000/campaigns/jobs `
-  -Headers $headers `
-  -ContentType 'application/json' `
-  -Body $body
-$job
-
-# Poll status
-Invoke-RestMethod -Uri ("http://localhost:8000/campaigns/jobs/{0}" -f $job.job_id) -Headers $headers
-```
-
-### Change image generation model
-
-```bash
-curl -X POST http://localhost:8000/select-model \
-  -H "Content-Type: application/json" \
-  -d '{"provider": "openai", "model": "gpt-image-1-mini"}'
-```
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8000/select-model `
-  -ContentType 'application/json' `
-  -Body '{"provider": "openai", "model": "gpt-image-1-mini"}'
-```
-
-### AI Monitoring Agent
-
-The AI monitoring agent demonstrates autonomous SLA tracking and intelligent alert generation using LLM tool calling via Model Context Protocol.
-
-#### Purpose
-
-Shows how the agent:
-
-1. Detects campaigns exceeding SLA thresholds (< 3 variants per product after 10 minutes)
-2. Identifies error patterns (>3 failures in 10 minutes)
-3. Uses MCP tools to gather contextual campaign data
-4. Generates professional, actionable email alerts via LLM
-
-#### Step-by-Step Testing
-
-**1. Seed a demo campaign with intentional issues:**
-
-```bash
-docker compose exec mcp-server uv run -m test.seed_demo
-```
-
-This creates campaign `demo-monitor-001` with:
-
-- Status: `processing` (active)
-- 2 products with 0 variants (triggers SLA breach after 10 minutes)
-- 4 recent errors (triggers repeated failures alert)
-
-**2. Start the monitoring agent:**
+After running the script, you can monitor the agent's logs in a separate terminal:
 
 ```bash
 docker compose logs -f agent
 ```
 
-**3. Test MCP server:**
+### Step by step guide
 
-**Bash:**
-
-```bash
-curl -X POST http://localhost:8001/mcp/tools/get_campaign_details -H "Content-Type: application/json" -d '{"campaign_id":"demo-monitor-001"}'
-```
-
-**PowerShell:**
-
-```powershell
-Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8001/mcp/tools/get_campaign_details `
-  -ContentType 'application/json' `
-  -Body '{"campaign_id":"demo-monitor-001"}'
-```
-
-**4. Test alerts (Expected email output below):**
-
-```bash
-docker compose exec mcp-server uv run -m src.cli alerts --text
-```
-
-**5. Observe agent behavior:**
-
-The agent polls every 60 seconds and will:
-
-- Detect the seeded errors immediately (>3 failures threshold)
-- After 10 minutes, detect SLA breach (0 variants < 3 expected)
-- Call LLM with MCP tools to generate contextual alert
-- Send email/Slack notification (if configured) or log to console
-
-**5. MCP Tool Calling Flow:**
-
-When the agent detects an issue, it calls the LLM with system instructions and MCP tool definitions. The LLM autonomously decides which tools to call:
-
-```python
-# Tools available to LLM:
-tools = [
-    "get_campaign_details",      # Campaign name, status, timeline
-    "get_product_variants",      # Variant counts per product
-    "get_recent_errors",         # Filtered error logs
-    "get_alert_history",         # Previous alerts (prevent spam)
-    "analyze_root_cause"         # Pattern analysis
-]
-```
-
-The LLM makes function calls like:
-
-```json
-{
-  "tool_calls": [
-    {"function": "get_campaign_details", "arguments": {"campaign_id": "demo-monitor-001"}},
-    {"function": "get_recent_errors", "arguments": {"campaign_id": "demo-monitor-001", "limit": 30}},
-    {"function": "analyze_root_cause", "arguments": {"campaign_id": "demo-monitor-001"}}
-  ]
-}
-```
-
-**7. Expected Alert Output:**
-
-```text
-Subject: ⚠️ Campaign Errors Detected – Demo Monitoring Campaign
-
-Hi Creative Team,
-
-Our automated creative pipeline has detected recurring errors for the Demo Monitoring Campaign.
-
-Issue Summary:
-• Campaign: Demo Monitoring Campaign (demo-monitor-001)
-• Status: Processing (active for 2 minutes)
-• Error Pattern: 4 API rate limit errors in the last 10 minutes
-• Root Cause: OpenAI API rate limit exceeded
-
-Affected Products:
-• prod_a: 0/3 variants completed
-• prod_b: 0/3 variants completed
-
-Recommended Actions:
-1. Switch to Google Gemini provider for immediate retry
-2. Review API quota limits in OpenAI dashboard
-3. Consider implementing exponential backoff
-
-The system will automatically retry with backoff. No immediate action required.
-
-Best regards,
-Creative Automation Agent
-```
-
-**8. Check agent status:**
-
-```bash
-curl http://localhost:8000/agent/status
-```
-
-Returns:
-
-```json
-{
-  "status": "running",
-  "last_heartbeat": "2025-10-09T19:45:30",
-  "last_active_campaigns": 1,
-  "check_interval": 60,
-  "sla_threshold_minutes": 10
-}
-```
+Please refer to [INSTRUCTIONS.md](docs/INSTRUCTIONS.md) for a step by step guide on how to run the pipeline and test the API and AI monitoring agent.
 
 ## Architecture
 
-**Refer to [Creative.AI](assignment/CREATIVE%20AI.pdf) for System Architecture**
+**Please refer to [Creative.AI](assignment/CREATIVE%20AI.pdf) for the System Architecture**
 
 ## Examples
 
-### Campaign Brief Structure
+### Campaign Brief Input Structure
 
 ```json
 {
@@ -316,13 +133,13 @@ outputs/
       ├── prod_beach_towel_001/
       │   ├── 1x1/
       │   │   ├── prod_beach_towel_001_1x1_20251009_191530.png
-    │   │   └── metadata.json
+      │   │   └── metadata.json
       │   ├── 9x16/
       │   │   ├── prod_beach_towel_001_9x16_20251009_191545.png
-    │   │   └── metadata.json
+      │   │   └── metadata.json
       │   └── 16x9/
       │       ├── prod_beach_towel_001_16x9_20251009_191600.png
-    │       └── metadata.json
+      │       └── metadata.json
       └── prod_sunscreen_spf50/
         └── ... (similar structure)
 ```
@@ -340,6 +157,8 @@ outputs/
   "target_market": "UK-West",
   "target_audience": "Outdoor enthusiasts aged 30-55",
   "campaign_message": "Stay Warm, Stay Active",
+  "provider": "openai",
+  "model": "gpt-image-1",
   "reused": false,
   "file_path": "outputs/winter-warmth-uk-2025/prod_thermal_socks_002/1x1/prod_thermal_socks_002_1x1_20251009_211303.png",
   "file_size_bytes": 1917103,
@@ -578,7 +397,7 @@ CREATE TABLE errors (
 - MCP server exposes campaign data as callable tools
 - Agent interprets tool results and generates contextual alerts
 
-**Containerization:**
+**Containerisation:**
 
 - Multi-service orchestration with Docker Compose
 - Separate containers for API, workers, agent, MCP, Redis
@@ -672,7 +491,7 @@ creative-ai/
 - [AGENT_SYSTEM.md](docs/AGENT_SYSTEM.md) - Agent monitoring and MCP details
 - [DEPLOYMENT.md](docs/DEPLOYMENT.md) - Production deployment guide
 - [DEVELOPMENT.md](docs/DEVELOPMENT.md) - Development setup and testing
-- [TECHNICAL_SPEC.md](TECHNICAL_SPEC.md) - Full technical specification
+- [INSTRUCTIONS.md](docs/INSTRUCTIONS.md) - Step by step guide on how to run the pipeline and test the API and AI monitoring agent
 
 ---
 
