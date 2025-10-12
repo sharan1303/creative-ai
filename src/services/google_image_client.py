@@ -20,6 +20,7 @@ class GoogleImageClient:
     """Client for Google AI Images API"""
 
     def __init__(self) -> None:
+        
         self.api_key = (settings.GOOGLE_AI_API_KEY or "").strip()
         self.model_default = (
             settings.GOOGLE_AI_IMAGE_MODEL or "gemini-2.5-flash-image"

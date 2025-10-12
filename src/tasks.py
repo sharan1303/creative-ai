@@ -50,21 +50,64 @@ def process_campaign_task(
         try:
             if selected_provider == "openai":
                 if not settings.OPENAI_API_KEY:
-                    raise RuntimeError(
-                        "OPENAI_API_KEY not configured for provider 'openai'"
+                    logger.warning(
+                        "OPENAI_API_KEY not configured for requested provider 'openai'. "
+                        "Attempting to fall back to alternative provider."
                     )
-                openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+                    # Try to fall back to Google if available
+                    if settings.GOOGLE_AI_API_KEY:
+                        logger.info(
+                            "→ Automatically switching from OpenAI to Google provider due to missing API key"
+                        )
+                        google_client = GoogleImageClient()
+                    else:
+                        raise RuntimeError(
+                            "OPENAI_API_KEY not configured and no alternative provider available"
+                        )
+                else:
+                    openai_client = OpenAIImageClient(api_key=settings.OPENAI_API_KEY)
+                    logger.info(
+                        f"Initialized OpenAI client for provider '{selected_provider}'"
+                    )
             elif selected_provider == "google":
                 if not settings.GOOGLE_AI_API_KEY:
-                    raise RuntimeError(
-                        "GOOGLE_AI_API_KEY not configured for provider 'google'"
+                    logger.warning(
+                        "GOOGLE_AI_API_KEY not configured for requested provider 'google'. "
+                        "Attempting to fall back to alternative provider."
                     )
-                google_client = GoogleImageClient()
+                    # Try to fall back to OpenAI if available
+                    if settings.OPENAI_API_KEY:
+                        logger.info(
+                            "→ Automatically switching from Google to OpenAI provider due to missing API key"
+                        )
+                        openai_client = OpenAIImageClient(
+                            api_key=settings.OPENAI_API_KEY
+                        )
+                    else:
+                        raise RuntimeError(
+                            "GOOGLE_AI_API_KEY not configured and no alternative provider available"
+                        )
+                else:
+                    google_client = GoogleImageClient()
+                    logger.info(
+                        f"Initialized Google client for provider '{selected_provider}'"
+                    )
             else:
                 raise RuntimeError(f"Unknown provider: {selected_provider}")
 
             orchestrator = GenAIOrchestrator(
                 openai_client=openai_client, google_client=google_client
+            )
+
+            # Log provider availability summary
+            available_providers = []
+            if openai_client:
+                available_providers.append("openai")
+            if google_client:
+                available_providers.append("google")
+            logger.info(
+                f"GenAI Orchestrator ready with providers: {available_providers}. "
+                f"Requested provider was: {selected_provider}"
             )
             processor = ImageProcessor()
             storage = StorageManager(base_path=Path("outputs"))

@@ -59,7 +59,7 @@ class GenAIOrchestrator:
         providers: Optional[List[str]] = None,
         models: Optional[List[str]] = None,
         quality: str = "standard",
-    ) -> bytes:
+    ) -> tuple[bytes, str, str]:
         """Generate image with automatic provider selection and retry
 
         Args:
@@ -69,7 +69,7 @@ class GenAIOrchestrator:
             product_id: Product identifier for logging
 
         Returns:
-            Generated image as PNG bytes
+            Tuple of (image_bytes, provider_name, model_name)
 
         Raises:
             Exception: If all providers and retries fail
@@ -82,6 +82,19 @@ class GenAIOrchestrator:
         providers_to_try = [p.lower() for p in (providers or self.providers)]
         if not providers_to_try:
             raise RuntimeError("No providers to try")
+
+        # Log automatic provider switching if requested provider is not available
+        if providers:
+            requested_providers = [p.lower() for p in providers]
+            unavailable_providers = [
+                p for p in requested_providers if p not in self.providers
+            ]
+            if unavailable_providers:
+                logger.warning(
+                    f"Requested provider(s) {unavailable_providers} not available. "
+                    f"Available providers: {self.providers}. "
+                    f"Automatically switching to available provider."
+                )
 
         # Default model order if none supplied
         default_models = ["gpt-image-1", "dall-e-3"]
@@ -105,9 +118,14 @@ class GenAIOrchestrator:
                             model=model,
                         )
                         logger.info(
-                            f"Successfully generated image for {product_id} with openai/{model}"
+                            f"✓ Successfully generated image for {product_id} using provider=openai, model={model}"
                         )
-                        return image_data
+                        # Log if we switched from requested provider
+                        if providers and "openai" not in [p.lower() for p in providers]:
+                            logger.info(
+                                f"→ Provider switched: Requested {providers} but used openai/{model}"
+                            )
+                        return (image_data, "openai", model)
                     except Exception as e:
                         last_error = e
                         logger.warning(
@@ -127,9 +145,14 @@ class GenAIOrchestrator:
                             prompt=prompt, size=size, quality=quality, model=model
                         )
                         logger.info(
-                            f"Successfully generated image for {product_id} with google/{model}"
+                            f"✓ Successfully generated image for {product_id} using provider=google, model={model}"
                         )
-                        return image_data
+                        # Log if we switched from requested provider
+                        if providers and "google" not in [p.lower() for p in providers]:
+                            logger.info(
+                                f"→ Provider switched: Requested {providers} but used google/{model}"
+                            )
+                        return (image_data, "google", model)
                     except Exception as e:
                         last_error = e
                         logger.warning(
@@ -150,7 +173,7 @@ class GenAIOrchestrator:
         1024x1024 (standard)
         1792x1024 (landscape)
         1024x1792 (portrait)
-        
+
         gpt-image-1 / gpt-image-1-mini support:
         1024x1024 (standard)
         1536x1024 (landscape)
