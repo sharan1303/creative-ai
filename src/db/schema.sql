@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     target_market TEXT,
     target_audience TEXT,
     campaign_message TEXT,
+    product_ids TEXT
 );
 
 CREATE TABLE IF NOT EXISTS variants (
