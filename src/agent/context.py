@@ -61,7 +61,6 @@ async def build_alert_context(
             )
         )
 
-    # Fetch recent errors
     errors = db.get_recent_errors(campaign.id, window_minutes=10, limit=5)
     error_summary = [
         ErrorLog(
@@ -72,7 +71,6 @@ async def build_alert_context(
         for e in errors
     ]
 
-    # Analyze root cause
     root_cause = _analyze_root_cause(errors)
 
     alert_context = AlertContext(
@@ -105,12 +103,9 @@ def _analyze_root_cause(errors: List) -> str:
         return "Unknown (no error logs available)"
 
     error_types = [e.error_type for e in errors]
-
-    # Count error types
     type_counts = Counter(error_types)
     most_common = type_counts.most_common(1)[0]
 
-    # Map error types to root causes
     root_cause_map = {
         "api_rate_limit": "API rate limit exceeded (quota exhausted)",
         "api_failure": "API service disruption or timeout",

@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
@@ -31,7 +30,7 @@ from src.utils.logger import get_logger
 
 try:
     import redis.asyncio as aioredis  # type: ignore
-except Exception:  # pragma: no cover
+except Exception:
     aioredis = None  # type: ignore
 
 logger = get_logger(__name__)
@@ -93,7 +92,6 @@ async def agent_status() -> AgentStatusResponse:
 
     This endpoint is read-only and does not attempt to start/stop the agent.
     """
-    # If no Redis client is available or URL not configured, report unknown
     if aioredis is None or not getattr(settings, "REDIS_URL", None):
         return AgentStatusResponse(status="unknown")
 
@@ -102,11 +100,9 @@ async def agent_status() -> AgentStatusResponse:
         raw = await redis.get("agent:heartbeat")
         await redis.aclose()
     except Exception:
-        # Redis unreachable
         return AgentStatusResponse(status="unknown")
 
     if not raw:
-        # No recent heartbeat key
         return AgentStatusResponse(status="stopped")
 
     try:
@@ -125,10 +121,7 @@ async def agent_status() -> AgentStatusResponse:
     )
 
 
-# -----------------------
-# Simple API key auth
-# -----------------------
-
+# API key auth
 API_KEY_HEADER_NAME = "X-API-Key"
 
 
@@ -137,7 +130,6 @@ def require_api_key(
 ) -> None:
     expected = settings.API_AUTH_TOKEN or ""
     if not expected:
-        # If not configured, leave open but warn
         logger.warning("API key not configured; skipping auth")
         return
     if not x_api_key or not secrets.compare_digest(x_api_key, expected):
@@ -196,7 +188,6 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     This endpoint executes a similar workflow as the CLI pipeline but operates on
     the provided JSON payload instead of a file.
     """
-    # Get the current provider from runtime config
     provider = runtime_config.provider
 
     # Validate and instantiate only the required client(s) based on provider
@@ -205,7 +196,6 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     db: Database | None = None
 
     try:
-        # Initialize database
         db = Database()
 
         if provider == "openai":
@@ -231,7 +221,6 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
         processor = ImageProcessor()
         storage = StorageManager(base_path=Path("outputs"))
 
-        # Create campaign record in database
         product_ids = [p.id for p in brief.products]
         db.create_campaign(
             campaign_id=brief.campaign_id,
@@ -246,7 +235,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
 
     except HTTPException:
         raise
-    except Exception as e:  # pragma: no cover - defensive
+    except Exception as e:
         logger.exception("Failed to initialise services")
         raise HTTPException(
             status_code=500, detail="Service initialisation failed"
@@ -257,7 +246,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     total_errors = 0
     results: List[VariantResult] = []
 
-    # Build tasks across all products/ratios
+    # Async run for all aspect ratios
     async def _run_for_product(product):
         nonlocal total_variants, total_reused, total_errors, results
         tasks = []
@@ -273,7 +262,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
                     ratio=ratio,
                     providers_to_try=[runtime_config.provider],
                     models_to_try=[runtime_config.model],
-                    database=db,  # Pass database connection
+                    database=db,
                 )
             )
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -285,7 +274,6 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
                     result,
                 )
                 total_errors += 1
-                # Log error to database
                 if db:
                     try:
                         db.create_error(
@@ -324,7 +312,6 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     try:
         await asyncio.gather(*[_run_for_product(product) for product in brief.products])
     finally:
-        # Update campaign status
         if db:
             try:
                 if total_errors == 0:
@@ -334,10 +321,8 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
             except Exception as e:
                 logger.error(f"Failed to update campaign status: {e}")
 
-            # Close database connection
             db.close()
 
-        # Ensure all instantiated clients are properly closed
         if openai_client is not None:
             await openai_client.close()
         if google_client is not None:
@@ -352,10 +337,7 @@ async def process_campaign(brief: CampaignBrief) -> CampaignProcessResponse:
     )
 
 
-# -----------------------
-# Background job handling (Celery + Redis)
-# -----------------------
-
+# Background job handling
 
 class JobCreateResponse(BaseModel):
     job_id: str

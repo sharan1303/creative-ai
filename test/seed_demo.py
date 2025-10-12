@@ -19,7 +19,6 @@ def main() -> None:
 
     campaign_id = "demo-monitor-001"
 
-    # Create or ensure campaign exists
     existing = db.get_campaign(campaign_id)
     if existing is None:
         logger.info("Seeding demo campaign %s", campaign_id)
@@ -38,7 +37,7 @@ def main() -> None:
         )
         db.update_campaign_status(campaign_id, "processing")
 
-    # Seed some recent errors to exercise repeated_failures path
+    # repeated_failures error seeded
     for i in range(4):
         db.create_error(
             campaign_id=campaign_id,

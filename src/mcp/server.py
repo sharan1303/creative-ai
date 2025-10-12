@@ -14,15 +14,12 @@ from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Create FastAPI app
 app = FastAPI(
     title="Creative Automation MCP Server",
     description="Model Context Protocol server for campaign data access using fastapi-mcp",
     version="1.0.0",
 )
 
-# Add CORS middleware for cross-origin requests
-# Read allowed origins from configuration; comma-separated string or "*"
 origins_raw = getattr(settings, "MCP_CORS_ALLOW_ORIGINS", "*")
 origins_list = (
     [o.strip() for o in origins_raw.split(",") if o.strip()]
@@ -50,21 +47,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include MCP endpoints
 app.include_router(router)
 
-
-# Health check endpoint
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "service": "mcp-server"}
 
 
-# Initialize FastAPI-MCP
 mcp = FastApiMCP(app)
-
-# Mount the MCP server using HTTP transport so clients can POST to /mcp
 mcp.mount_http()
 
 logger.info("MCP server initialized with fastapi-mcp")

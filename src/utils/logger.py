@@ -20,11 +20,9 @@ def get_logger(name: str) -> logging.Logger:
     """
     logger = logging.getLogger(name)
 
-    # Only configure if not already configured
     if not logger.handlers:
         logger.setLevel(getattr(logging, settings.LOG_LEVEL))
 
-        # Console handler with UTF-8 encoding support
         import io
 
         utf8_stdout = io.TextIOWrapper(
@@ -33,7 +31,6 @@ def get_logger(name: str) -> logging.Logger:
         handler = logging.StreamHandler(utf8_stdout)
         handler.setLevel(getattr(logging, settings.LOG_LEVEL))
 
-        # Format: timestamp - level - module - message
         formatter = logging.Formatter(
             "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",

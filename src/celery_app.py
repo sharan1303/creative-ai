@@ -16,7 +16,7 @@ celery_app = Celery(
     "creative_ai",
     broker=BROKER_URL,
     backend=RESULT_BACKEND,
-    include=["src.tasks"],  # ensure tasks are imported/registered in worker processes
+    include=["src.tasks"],
 )
 
 celery_app.conf.update(
@@ -26,10 +26,7 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_always_eager=False,
-    # Celery 5.x-compatible broker retry behavior
     broker_connection_retry=True,
 )
 
-# Ensure tasks are registered when the worker imports this module
-# This import side-effect registers tasks decorated with celery_app.task
 import src.tasks  # noqa: F401,E402

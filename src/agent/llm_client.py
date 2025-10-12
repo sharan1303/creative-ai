@@ -77,11 +77,9 @@ async def generate_alert_email(
     Returns:
         Formatted email content
     """
-    # Resolve provider and model
     provider = (getattr(settings, "AGENT_LLM_PROVIDER", "openai") or "openai").lower()
     model = _resolve_agent_model(provider)
 
-    # Create initial prompt with issue context
     user_prompt = f"""
 Campaign Issue Detected:
 
@@ -103,7 +101,6 @@ Then draft a clear, actionable email explaining the delay and providing next ste
     # Route to provider-specific implementation
     try:
         if provider == "openai":
-            # Require key
             if not (settings.OPENAI_API_KEY or "").strip():
                 raise ValueError("OPENAI_API_KEY not set for OpenAI provider")
             return await _generate_with_openai_mcp(user_prompt=user_prompt, model=model)
@@ -117,7 +114,6 @@ Then draft a clear, actionable email explaining the delay and providing next ste
         raise ValueError(f"Unknown AGENT_LLM_PROVIDER '{provider}'")
     except Exception as e:
         logger.warning(f"LLM generation failed: {e}", exc_info=True)
-        # Fallback to basic alert
         return _generate_fallback_alert(campaign_id, issue_type, context)
 
 
@@ -222,7 +218,6 @@ async def _get_mcp_tools_for_gemini() -> List[Dict[str, Any]]:
             if functions:
                 return [{"function_declarations": functions}]
             logger.warning("No MCP tool operations discovered in OpenAPI for Gemini")
-            # Fallback to static tools
             fallback = _get_fallback_tools()
             return [
                 {
@@ -620,7 +615,6 @@ async def _generate_with_google_mcp(*, user_prompt: str, model: str) -> str:
     if not api_key:
         raise ValueError("GOOGLE_AI_API_KEY is required for Google provider")
 
-    # Get available tools from MCP server
     tools_schema = await _get_mcp_tools_for_gemini()
 
     client = genai.Client(api_key=api_key)

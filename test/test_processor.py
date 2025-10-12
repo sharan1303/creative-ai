@@ -25,10 +25,7 @@ def sample_image_bytes():
 
 def test_image_resize(processor, sample_image_bytes):
     """Test image resizing to different dimensions"""
-    # Resize to 1024x1024
     resized = processor.resize(sample_image_bytes, 1024, 1024)
-
-    # Verify
     result_img = Image.open(io.BytesIO(resized))
     assert result_img.size == (1024, 1024)
     assert result_img.format == "PNG"
@@ -58,10 +55,9 @@ def test_add_text_overlay(processor, sample_image_bytes):
         image_data=sample_image_bytes, text=text, position="bottom"
     )
 
-    # Verify result is valid image
     result_img = Image.open(io.BytesIO(result))
     assert result_img.size == (2048, 2048)
-    assert result_img.mode == "RGBA"  # Should have alpha channel
+    assert result_img.mode == "RGBA"
 
 
 def test_add_text_overlay_different_positions(processor, sample_image_bytes):
@@ -73,6 +69,5 @@ def test_add_text_overlay_different_positions(processor, sample_image_bytes):
             image_data=sample_image_bytes, text="Test", position=position
         )
 
-        # Should produce valid image
         result_img = Image.open(io.BytesIO(result))
         assert result_img.size == (2048, 2048)

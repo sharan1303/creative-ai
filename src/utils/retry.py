@@ -52,7 +52,6 @@ def async_retry(
                             f"All {max_attempts} attempts failed for {func.__name__}: {e}"
                         )
 
-            # Re-raise the last exception if all attempts failed
             raise last_exception
 
         return wrapper

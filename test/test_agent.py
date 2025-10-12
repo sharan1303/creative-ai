@@ -38,7 +38,6 @@ class TestDatabase:
 
     def test_get_active_campaigns(self, db):
         """Test retrieving active campaigns"""
-        # Create test campaigns
         db.create_campaign("test-001", "Campaign 1", ["prod_a"], status="processing")
         db.create_campaign("test-002", "Campaign 2", ["prod_b"], status="pending")
         db.create_campaign("test-003", "Campaign 3", ["prod_c"], status="completed")
@@ -83,7 +82,6 @@ class TestDatabase:
         """Test retrieving recent errors"""
         db.create_campaign("test-001", "Test", ["prod_a"])
 
-        # Create multiple errors
         for i in range(5):
             db.create_error(
                 campaign_id="test-001",
@@ -115,10 +113,8 @@ class TestDatabase:
         """Test retrieving last alert time"""
         db.create_campaign("test-001", "Test", ["prod_a"])
 
-        # No alerts yet
         assert db.get_last_alert_time("test-001") is None
 
-        # Create alert
         db.create_alert(
             campaign_id="test-001",
             issue_type="insufficient_variants",
@@ -201,31 +197,6 @@ class TestContextBuilder:
             "insufficient variants".replace(" ", "")[:8]
             in email.replace(" ", "").lower()
         )
-
-
-@pytest.mark.asyncio
-class TestMonitorAgent:
-    """Test monitoring agent logic"""
-
-    async def test_campaign_check_logic(self):
-        """Test campaign health check logic"""
-        # This would test the agent's check logic
-        # In a full implementation, we'd mock the database
-        # and test SLA threshold checks
-        pass
-
-
-# Mark tests that require real API access
-@pytest.mark.integration
-@pytest.mark.asyncio
-class TestLLMClient:
-    """Integration tests for LLM client (requires API key)"""
-
-    async def test_generate_alert_email(self):
-        """Test email generation with real API"""
-        # This would require OPENAI_API_KEY to be set
-        # and would make a real API call
-        pass
 
 
 if __name__ == "__main__":

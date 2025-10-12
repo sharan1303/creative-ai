@@ -92,7 +92,7 @@ async def generate_variant(
     Returns:
         Dictionary with generation result metadata
     """
-    # Step 1: Check for existing asset (cache hit)
+    # cache hit
     if offload_blocking:
         existing_path = await asyncio.to_thread(
             storage.get_asset, product.id, ratio.name, brief.campaign_id
@@ -114,7 +114,6 @@ async def generate_variant(
             "reused": True,
         }
 
-    # Step 2: Generate new image
     prompt = build_generation_prompt(product, brief)
     logger.debug(f"Prompt for {product.id}: {prompt[:100]}...")
 
@@ -129,7 +128,6 @@ async def generate_variant(
             quality=settings.DEFAULT_IMAGE_QUALITY,
         )
     except Exception as e:
-        # Log error to database if available
         if database:
             try:
                 database.create_error(
@@ -140,10 +138,8 @@ async def generate_variant(
                 )
             except Exception as db_err:
                 logger.warning(f"Failed to log error to database: {db_err}")
-        # Re-raise the original exception
         raise
 
-    # Step 3: Resize to exact target
     if offload_blocking:
         image_data = await asyncio.to_thread(
             processor.resize, image_data, ratio.width, ratio.height
@@ -151,7 +147,6 @@ async def generate_variant(
     else:
         image_data = processor.resize(image_data, ratio.width, ratio.height)
 
-    # Step 4: Add text overlay (only for new generations)
     if offload_blocking:
         image_data = await asyncio.to_thread(
             processor.add_text_overlay, image_data, brief.campaign_message, "bottom"
@@ -161,7 +156,6 @@ async def generate_variant(
             image_data=image_data, text=brief.campaign_message, position="bottom"
         )
 
-    # Step 5: Save output (only for new generations)
     metadata = {
         "campaign_id": brief.campaign_id,
         "product_id": product.id,
@@ -193,7 +187,6 @@ async def generate_variant(
             metadata=metadata,
         )
 
-    # Step 6: Record variant to database (only for new generations)
     if database:
         try:
             database.create_variant(

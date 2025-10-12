@@ -27,14 +27,14 @@ class Settings(BaseSettings):
     GOOGLE_AI_ENDPOINT: str = "https://generativelanguage.googleapis.com"
 
     # Storage configuration
-    STORAGE_MODE: str = "local"  # Options: "local" | "azure" | "s3"
+    STORAGE_MODE: str = "local"
     AZURE_STORAGE_CONNECTION_STRING: Optional[str] = None
     AWS_S3_BUCKET: Optional[str] = None
 
     # Processing configuration
-    MAX_CONCURRENT_GENERATIONS: int = 3  # Limit concurrent GenAI calls
-    RETRY_MAX_ATTEMPTS: int = 3  # Retry failed API calls
-    RETRY_BACKOFF_FACTOR: float = 2.0  # Exponential backoff multiplier
+    MAX_CONCURRENT_GENERATIONS: int = 3
+    RETRY_MAX_ATTEMPTS: int = 3
+    RETRY_BACKOFF_FACTOR: float = 2.0
 
     # Celery / Redis
     REDIS_URL: str = "redis://redis:6379/0"
@@ -42,35 +42,32 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: Optional[str] = None
 
     # Logging
-    LOG_LEVEL: str = "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
-
+    LOG_LEVEL: str = "INFO"
     # Provider selection and fallback chain
     GENAI_PROVIDER: str = "google"
     GENAI_FALLBACKS: str = "openai"
 
     # Model selection per provider
     OPENAI_DEFAULT_MODEL: str = (
-        "gpt-image-1"  # Options: dall-e-3, gpt-image-1, gpt-image-1-mini
+        "gpt-image-1"
     )
-    GOOGLE_DEFAULT_MODEL: str = "gemini-2.5-flash-image"  # Google AI model
+    GOOGLE_DEFAULT_MODEL: str = "gemini-2.5-flash-image"  
 
     # Image generation settings
     DEFAULT_IMAGE_QUALITY: str = (
-        "low"  # Options: standard | hd (OpenAI), low/medium/high/auto (gpt-image)
+        "low"
     )
-    DEFAULT_IMAGE_WIDTH: int = 1024  # Default image width
-    DEFAULT_IMAGE_HEIGHT: int = 1024  # Default image height
+    DEFAULT_IMAGE_WIDTH: int = 1024 
+    DEFAULT_IMAGE_HEIGHT: int = 1024 
 
     # Agent monitoring settings (LLM for alert generation)
     # Provider can be switched between "openai" and "google"
     AGENT_LLM_PROVIDER: str = "google"
-    # Optional explicit model override; if not set, a provider-specific default is used
     AGENT_LLM_MODEL: Optional[str] = None
-    # Provider-specific defaults used when AGENT_LLM_MODEL is not provided
     AGENT_LLM_MODEL_OPENAI: str = "gpt-5-nano"
     AGENT_LLM_MODEL_GOOGLE: str = "gemini-2.5-flash"
-    AGENT_CHECK_INTERVAL: int = 60  # Seconds between monitoring checks
-    AGENT_SLA_THRESHOLD_MINUTES: int = 10  # Minutes before SLA breach alert
+    AGENT_CHECK_INTERVAL: int = 60
+    AGENT_SLA_THRESHOLD_MINUTES: int = 10
 
     # Email/SMTP settings (for agent alerts)
     SMTP_HOST: Optional[str] = None
@@ -80,21 +77,19 @@ class Settings(BaseSettings):
     SMTP_FROM: str = "noreply@company.com"
     STAKEHOLDER_EMAIL: str = "creative-lead@company.com"
 
-    # Slack webhook (optional)
     SLACK_WEBHOOK_URL: Optional[str] = None
 
     # MCP Server Configuration
     MCP_SERVER_URL: str = "http://localhost:8001"
     MCP_SERVER_HOST: str = "0.0.0.0"
     MCP_SERVER_PORT: int = 8001
-    # Comma-separated list of allowed origins for MCP server CORS; use "*" for any
     MCP_CORS_ALLOW_ORIGINS: str = "*"
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
-        extra="ignore",  # Ignore unknown env vars
+        extra="ignore",
     )
 
 
@@ -110,10 +105,8 @@ class RuntimeConfig:
     """
 
     def __init__(self):
-        # Initialize with validated provider and aligned model
         self._provider = "google"
         self._model = self._get_default_model_for_provider(self._provider)
-        # Apply environment override via setter (validates and aligns model)
         self.provider = settings.GENAI_PROVIDER
 
     @property
@@ -125,7 +118,6 @@ class RuntimeConfig:
         if value not in ["openai", "google"]:
             raise ValueError(f"Invalid provider: {value}. Must be 'openai' or 'google'")
         self._provider = value
-        # Update model to match provider if not explicitly set
         self._model = self._get_default_model_for_provider(value)
 
     @property
@@ -157,6 +149,4 @@ class RuntimeConfig:
         """Export configuration as dictionary"""
         return {"provider": self._provider, "model": self._model}
 
-
-# Global runtime configuration instance
 runtime_config = RuntimeConfig()

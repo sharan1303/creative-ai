@@ -63,7 +63,6 @@ class GoogleImageClient:
         # API reference: https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
         url_path = f"/v1beta/models/{model_name}:generateContent"
 
-        # Build request payload following Gemini format
         body = {
             "contents": [
                 {
@@ -80,20 +79,19 @@ class GoogleImageClient:
         }
 
         try:
-            # Pass API key as query parameter
             response = await self._http.post(
                 url_path, params={"key": self.api_key}, json=body
             )
             response.raise_for_status()
             data = response.json()
-        except httpx.HTTPStatusError as e:  # pragma: no cover - depends on external API
+        except httpx.HTTPStatusError as e:
             logger.error(
                 "Gemini API error: %s - %s",
                 e.response.status_code,
                 e.response.text,
             )
             raise
-        except Exception as e:  # pragma: no cover - network/env dependent
+        except Exception as e:
             logger.error("Unexpected error calling Gemini API: %s", e)
             raise
 
@@ -119,7 +117,6 @@ class GoogleImageClient:
                 raise ValueError(f"No parts in content. Keys: {list(content.keys())}")
 
             first_part = parts[0]
-            # Try various field names that might contain base64 image data
             b64_data = (
                 first_part.get("image_bytes_base64")
                 or first_part.get("bytes_base64")

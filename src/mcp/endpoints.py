@@ -184,7 +184,7 @@ async def get_recent_errors(request: RecentErrorsRequest) -> List[ErrorLogEntry]
             ErrorLogEntry(
                 timestamp=e.occurred_at.isoformat(),
                 error_type=e.error_type,
-                error_message=e.error_message[:200],  # Truncate long messages
+                error_message=e.error_message[:200],
                 campaign_id=e.campaign_id,
                 product_id=getattr(e, "product_id", None),
             )
@@ -256,16 +256,12 @@ async def analyze_root_cause(request: RootCauseRequest) -> dict:
                 "recommendations": [],
             }
 
-        # Analyze error patterns
         from collections import Counter
 
         error_types = [e.error_type for e in errors]
         type_counts = Counter(error_types)
-
-        # Get most common error types
         most_common = type_counts.most_common(3)
 
-        # Map error types to root causes
         root_cause_map = {
             "api_rate_limit": "API rate limit exceeded - quota exhausted or too many concurrent requests",
             "api_failure": "API service disruption - external service downtime or connectivity issues",
@@ -292,7 +288,6 @@ async def analyze_root_cause(request: RootCauseRequest) -> dict:
                 }
             )
 
-        # Timeline analysis
         timeline = None
         if len(errors) > 1:
             first_error = min(errors, key=lambda e: e.occurred_at)

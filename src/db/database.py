@@ -102,8 +102,6 @@ class Database:
             self.conn.close()
             self.conn = None
 
-    # Campaign operations
-
     def get_active_campaigns(self) -> List[Campaign]:
         """Get all active campaigns (processing or pending)"""
         conn = self._get_conn()
@@ -175,8 +173,6 @@ class Database:
         conn.commit()
         logger.debug(f"Updated campaign {campaign_id} status to {status}")
 
-    # Variant operations
-
     def get_variants(
         self, campaign_id: str, product_id: Optional[str] = None
     ) -> List[Variant]:
@@ -243,8 +239,6 @@ class Database:
         cursor = conn.execute("SELECT * FROM variants WHERE id = ?", (variant_id,))
         return self._row_to_variant(cursor.fetchone())
 
-    # Error operations
-
     def get_recent_errors(
         self, campaign_id: str, window_minutes: int = 10, limit: int = 5
     ) -> List[Error]:
@@ -296,8 +290,6 @@ class Database:
 
         cursor = conn.execute("SELECT * FROM errors WHERE id = ?", (error_id,))
         return self._row_to_error(cursor.fetchone())
-
-    # Alert operations
 
     def get_last_alert_time(
         self, campaign_id: str, issue_type: Optional[str] = None

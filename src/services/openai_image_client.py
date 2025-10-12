@@ -85,7 +85,6 @@ class OpenAIImageClient:
 
             data = response.json()
 
-            # Handle different response formats generically
             entries = data.get("data") or []
             if not isinstance(entries, list) or not entries:
                 raise ValueError(

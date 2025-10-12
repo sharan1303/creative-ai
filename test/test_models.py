@@ -32,7 +32,7 @@ def test_campaign_brief_requires_one_or_more_products():
     """Test that at least 1 product is required"""
     invalid_brief = {
         "campaign_id": "test-001",
-        "products": [],  # 0 products should fail
+        "products": [],
         "target_market": "US",
         "target_audience": "Test",
         "campaign_message": "Test",
@@ -41,7 +41,6 @@ def test_campaign_brief_requires_one_or_more_products():
     with pytest.raises(ValidationError) as exc_info:
         CampaignBrief(**invalid_brief)
 
-    # Check that validation failed for products field with correct constraint
     assert "products" in str(exc_info.value).lower()
     assert (
         "at least 1" in str(exc_info.value).lower()
@@ -51,7 +50,7 @@ def test_campaign_brief_requires_one_or_more_products():
 
 def test_campaign_message_max_length():
     """Test campaign message length validation"""
-    long_message = "x" * 101  # 101 characters (exceeds max of 100)
+    long_message = "x" * 101
 
     invalid_brief = {
         "campaign_id": "test-001",

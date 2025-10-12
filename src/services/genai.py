@@ -79,7 +79,6 @@ class GenAIOrchestrator:
 
         logger.info(f"Generating image for {product_id} at {width}x{height}")
 
-        # Determine providers and models to try
         providers_to_try = [p.lower() for p in (providers or self.providers)]
         if not providers_to_try:
             raise RuntimeError("No providers to try")
@@ -109,7 +108,7 @@ class GenAIOrchestrator:
                             f"Successfully generated image for {product_id} with openai/{model}"
                         )
                         return image_data
-                    except Exception as e:  # pragma: no cover - depends on API
+                    except Exception as e:
                         last_error = e
                         logger.warning(
                             f"openai/{model} failed, trying next: {e}", exc_info=True
@@ -131,7 +130,7 @@ class GenAIOrchestrator:
                             f"Successfully generated image for {product_id} with google/{model}"
                         )
                         return image_data
-                    except Exception as e:  # pragma: no cover - optional provider
+                    except Exception as e:
                         last_error = e
                         logger.warning(
                             f"google/{model} failed, trying next: {e}", exc_info=True
@@ -140,7 +139,6 @@ class GenAIOrchestrator:
 
             logger.debug(f"Provider not available or unknown: {provider}")
 
-        # If we exhaust all providers/models, raise the last error if any
         if last_error is not None:
             raise last_error
         raise RuntimeError("All generation attempts failed")

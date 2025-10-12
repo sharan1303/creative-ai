@@ -40,12 +40,10 @@ def process_campaign_task(
 
     brief = CampaignBrief(**brief_dict)
 
-    # Use passed provider/model or fall back to runtime config
     selected_provider = provider or runtime_config.provider
     selected_model = model or runtime_config.model
 
     async def _run() -> Dict[str, Any]:
-        # Validate and instantiate only the required client(s) based on provider
         openai_client = None
         google_client = None
 
@@ -135,7 +133,6 @@ def process_campaign_task(
                 "results": results,
             }
         finally:
-            # Ensure all instantiated clients are properly closed
             if openai_client:
                 await openai_client.close()
             if google_client:

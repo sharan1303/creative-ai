@@ -73,24 +73,17 @@ class ImageProcessor:
 
         # Only resize if dimensions don't match
         if img.size != (target_width, target_height):
-            # Calculate aspect ratios
             target_ratio = target_width / target_height
             current_ratio = img.width / img.height
 
-            # Scale to cover target dimensions (prevent stretching)
             if current_ratio > target_ratio:
-                # Image is wider - scale by height
                 new_height = target_height
                 new_width = int(img.width * (target_height / img.height))
             else:
-                # Image is taller or square - scale by width
                 new_width = target_width
                 new_height = int(img.height * (target_width / img.width))
 
-            # Resize to cover dimensions
             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-
-            # Center crop to exact target size
             left = (new_width - target_width) // 2
             top = (new_height - target_height) // 2
             right = left + target_width
@@ -103,7 +96,6 @@ class ImageProcessor:
         else:
             logger.debug("Image already at target size, skipping resize")
 
-        # Convert to PNG
         output = io.BytesIO()
         img.save(output, format="PNG", optimize=True)
         return output.getvalue()
@@ -134,7 +126,6 @@ class ImageProcessor:
 
         img = Image.open(io.BytesIO(image_data))
 
-        # Convert to RGBA for transparency support
         if img.mode != "RGBA":
             img = img.convert("RGBA")
 
@@ -142,7 +133,6 @@ class ImageProcessor:
         overlay = Image.new("RGBA", img.size, (255, 255, 255, 0))
         draw = ImageDraw.Draw(overlay)
 
-        # Load font
         try:
             if self.font_path:
                 font = ImageFont.truetype(self.font_path, font_size)
@@ -182,12 +172,10 @@ class ImageProcessor:
             logger.warning(f"Font loading failed: {e}, using default")
             font = ImageFont.load_default()
 
-        # Calculate text bounding box
         bbox = draw.textbbox((0, 0), text, font=font)
         text_width = bbox[2] - bbox[0]
         text_height = bbox[3] - bbox[1]
 
-        # Calculate position
         padding = 20
         if position == "bottom":
             x = (img.width - text_width) // 2
@@ -195,7 +183,7 @@ class ImageProcessor:
         elif position == "top":
             x = (img.width - text_width) // 2
             y = 60
-        else:  # center
+        else:
             x = (img.width - text_width) // 2
             y = (img.height - text_height) // 2
 
@@ -208,13 +196,10 @@ class ImageProcessor:
         ]
         draw.rectangle(bg_rect, fill=bg_color)
 
-        # Draw text
         draw.text((x, y), text, font=font, fill=text_color)
 
-        # Composite overlay onto original image
         img = Image.alpha_composite(img, overlay)
 
-        # Save as PNG
         output = io.BytesIO()
         img.save(output, format="PNG", optimize=True)
 

@@ -1,7 +1,3 @@
--- Database schema for creative automation pipeline
--- Includes agent monitoring tables
-
--- campaigns table
 CREATE TABLE IF NOT EXISTS campaigns (
     id TEXT PRIMARY KEY,
     name TEXT,
@@ -11,10 +7,8 @@ CREATE TABLE IF NOT EXISTS campaigns (
     target_market TEXT,
     target_audience TEXT,
     campaign_message TEXT,
-    product_ids TEXT  -- JSON array of product IDs
 );
 
--- variants table
 CREATE TABLE IF NOT EXISTS variants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id TEXT NOT NULL,
@@ -22,12 +16,11 @@ CREATE TABLE IF NOT EXISTS variants (
     product_name TEXT,
     aspect_ratio TEXT NOT NULL,  -- '1:1', '9:16', '16:9'
     file_path TEXT NOT NULL,
-    metadata TEXT,  -- JSON metadata
+    metadata TEXT,  -- JSON
     generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
 );
 
--- errors table
 CREATE TABLE IF NOT EXISTS errors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id TEXT NOT NULL,
@@ -38,7 +31,6 @@ CREATE TABLE IF NOT EXISTS errors (
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
 );
 
--- alerts table (audit trail)
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id TEXT NOT NULL,
@@ -49,7 +41,6 @@ CREATE TABLE IF NOT EXISTS alerts (
     FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
 );
 
--- Indexes for performance
 CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
 CREATE INDEX IF NOT EXISTS idx_campaigns_created ON campaigns(created_at);
 CREATE INDEX IF NOT EXISTS idx_variants_campaign ON variants(campaign_id);

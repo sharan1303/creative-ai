@@ -50,7 +50,6 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
     logger.info("Creative Automation Pipeline - Starting")
     logger.info("=" * 80)
 
-    # Step 1: Load and validate campaign brief
     logger.info(f"Loading campaign brief from: {brief_path}")
     try:
         with open(brief_path, "r", encoding="utf-8") as f:
@@ -71,11 +70,9 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
         logger.error(f"Campaign brief validation failed: {e}")
         sys.exit(1)
 
-    # Step 2: Initialize services (including database)
     logger.info("\nInitializing services...")
 
     try:
-        # Initialize database
         db = Database()
         logger.info("[OK] Database initialized")
 
@@ -101,7 +98,6 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
         logger.error(f"Service initialization failed: {e}")
         sys.exit(1)
 
-    # Step 3: Create campaign record in database
     try:
         product_ids = [p.id for p in brief.products]
         campaign = db.create_campaign(
@@ -118,7 +114,6 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
         logger.error(f"Failed to create campaign record: {e}")
         sys.exit(1)
 
-    # Step 4: Process each product
     total_variants = 0
     total_reused = 0
     total_errors = 0
@@ -129,8 +124,8 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
     for idx, product in enumerate(brief.products, 1):
         logger.info(f"\n[{idx}/{len(brief.products)}] Processing: {product.name}")
         logger.info(f"  Product ID: {product.id}")
-
-        # Generate for each aspect ratio in parallel
+        
+        # Async aspect ratio generations
         tasks = []
         for ratio in ASPECT_RATIOS:
             task = generate_variant(
@@ -142,25 +137,22 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
                 ratio=ratio,
                 providers_to_try=[provider],
                 models_to_try=[model],
-                database=db,  # Pass database connection
+                database=db,
             )
             tasks.append(task)
-
-        # Execute all aspect ratio generations in parallel
+            
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Count successes and failures, record to database
         for ratio, result in zip(ASPECT_RATIOS, results):
             if isinstance(result, Exception):
                 logger.error(f"  [FAILED] Variant generation failed: {result}")
                 total_errors += 1
-                # Log error to database
                 try:
                     db.create_error(
                         campaign_id=brief.campaign_id,
                         product_id=product.id,
                         error_type="generation_failure",
-                        error_message=str(result)[:500],  # Truncate long errors
+                        error_message=str(result)[:500],
                     )
                 except Exception as e:
                     logger.warning(f"Failed to log error to database: {e}")
@@ -168,13 +160,9 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
                 total_reused += 1
                 total_variants += 1
                 logger.info(f"  [REUSED] {result['ratio']}")
-                # Note: Reused variants are already in database from previous run
             else:
                 total_variants += 1
                 logger.info(f"  [OK] Generated: {result['ratio']}")
-                # Variant already recorded by generate_variant function
-
-    # Step 5: Update campaign status and cleanup
     try:
         if total_errors == 0:
             db.update_campaign_status(brief.campaign_id, "completed")
@@ -187,10 +175,8 @@ async def process_campaign(brief_path: str, provider: str, model: str) -> None:
     except Exception as e:
         logger.error(f"Failed to update campaign status: {e}")
 
-    # Close database connection
     db.close()
 
-    # Close API clients
     if openai_client is not None:
         await openai_client.close()
     if google_client is not None:
@@ -230,10 +216,8 @@ def main():
         "--version", action="version", version="Creative Automation Pipeline v1.0.0"
     )
 
-    # Create subparsers for different commands
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Process command
     process_parser = subparsers.add_parser(
         "process",
         help="Process a campaign brief and generate assets",
@@ -247,7 +231,6 @@ Examples:
         "--brief", required=True, help="Path to campaign brief JSON file"
     )
 
-    # Monitor command
     monitor_parser = subparsers.add_parser(
         "monitor",
         help="Run the monitoring agent for campaign alerts",
@@ -270,7 +253,6 @@ Examples:
         help=f"SLA threshold in minutes (default: {settings.AGENT_SLA_THRESHOLD_MINUTES})",
     )
 
-    # MCP Server command
     mcp_parser = subparsers.add_parser(
         "mcp-server",
         help="Run MCP server for agent tools",
@@ -287,7 +269,6 @@ Examples:
         "--port", type=int, default=8001, help="Port to bind MCP server (default: 8001)"
     )
 
-    # Alerts command
     alerts_parser = subparsers.add_parser(
         "alerts",
         help="Show latest alert payload (optionally filtered by campaign)",
@@ -319,12 +300,10 @@ Examples:
 
     args = parser.parse_args()
 
-    # Show help if no command specified
     if not args.command:
         parser.print_help()
         sys.exit(1)
 
-    # Run appropriate command
     try:
         if args.command == "process":
             # Build provider choices based on available credentials
@@ -402,10 +381,9 @@ Examples:
                 )
                 sys.exit(0)
             if args.text or args.regenerate:
-                # Optionally regenerate to ensure human-readable text
+                # ensure human-readable text
                 if args.regenerate:
                     try:
-                        # Force mock provider to guarantee plain text output
                         setattr(settings, "GENAI_PROVIDER", "google")
                     except Exception:
                         pass
@@ -417,7 +395,6 @@ Examples:
                     campaign = db.get_campaign(alert.campaign_id)
                     if campaign is None:
                         return alert.email_content
-                    # Build context (kept for potential future display or debugging)
                     await build_alert_context(
                         campaign=campaign, issue_type=alert.issue_type, context={}
                     )
@@ -431,7 +408,6 @@ Examples:
                 email_text = asyncio.run(_render_email_text())
                 print(email_text)
             else:
-                # Output as JSON for easy consumption
                 payload = {
                     "id": alert.id,
                     "campaign_id": alert.campaign_id,

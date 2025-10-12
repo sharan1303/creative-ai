@@ -23,19 +23,13 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 - [Quick Start - Commands to run the pipeline](#quick-start)
   - [Prerequisites](#prerequisites)
   - [Configure environment variables](#configure-environment-variables)
-  - [Docker deployment](#docker-deployment)
-  - [Run pipeline and test the API](#run-pipeline-and-test-the-api)
-  - [Change image generation model](#change-image-generation-model)
-  - [AI Monitoring Agent](#ai-monitoring-agent)
+  - [Quickest way to run the pipeline](#quickest-way-to-run-the-pipeline)
 - [Architecture](#architecture)
 - [Examples](#examples)
 - [Design Decisions](#design-decisions)
 - [Technical Highlights](#technical-highlights)
 - [API Reference](#api-reference)
 - [Roadmap](#roadmap)
-  - [Current Capabilities](#current-capabilities-v10)
-  - [Stretch Goals Completed](#stretch-goals-completed-)
-  - [Future Enhancements](#future-enhancements-v20)
 - [Project Structure](#project-structure)
 - [Documentation](#documentation)
 
@@ -59,6 +53,10 @@ AI-powered marketing creative generation system that transforms campaign briefs 
 cp .env.example .env
 ```
 
+### Quickest way to run the pipeline
+
+batch file
+
 ### Docker deployment
 
 Start up Docker Desktop and start all services (API + Redis + Workers + Agent + MCP)
@@ -72,7 +70,6 @@ docker compose up -d --build
 **Bash:**
 
 ```bash
-# Health check
 curl http://localhost:8000/health
 # {"status": "ok"}
 
@@ -173,7 +170,6 @@ docker compose logs -f agent
 **Bash:**
 
 ```bash
-# Test MCP server
 curl -X POST http://localhost:8001/mcp/tools/get_campaign_details -H "Content-Type: application/json" -d '{"campaign_id":"demo-monitor-001"}'
 ```
 
@@ -276,200 +272,9 @@ Returns:
 }
 ```
 
----
-
 ## Architecture
 
-### System Overview
-
-The pipeline uses a microservices architecture with clear separation of concerns:
-
-```mermaid
-flowchart TB
-    subgraph Client["Client Layer"]
-        CLI[CLI Tool]
-        HTTP[HTTP Client]
-    end
-    
-    subgraph API["API Gateway - FastAPI:8000"]
-        Auth[API Key Auth]
-        Sync[POST /campaigns/process<br/>Synchronous]
-        Async[POST /campaigns/jobs<br/>Asynchronous]
-    end
-    
-    subgraph Queue["Queue Layer"]
-        Redis[(Redis Broker<br/>Port 6379)]
-        Workers[Celery Workers<br/>Scalable]
-    end
-    
-    subgraph Monitor["AI Monitoring - Stretch Goal"]
-        Agent[Monitor Agent<br/>60s polling]
-        MCP[MCP Server:8001<br/>Tool calling]
-    end
-    
-    subgraph Pipeline["Core Services"]
-        GenAI[GenAI Orchestrator]
-        OpenAI[OpenAI Client<br/>GPT-image-1, GPT-image-1-mini]
-        Google[Google Client<br/>Gemini-2.5-flash-image]
-        Processor[Image Processor<br/>Pillow]
-        Storage[Storage Manager]
-    end
-    
-    subgraph Data["Data Layer"]
-        DB[(SQLite DB<br/>Campaign tracking)]
-        FS[File System<br/>outputs/]
-    end
-    
-    CLI --> Pipeline
-    HTTP --> Auth
-    Auth --> Sync
-    Auth --> Async
-    Sync --> Pipeline
-    Async --> Redis
-    Redis --> Workers
-    Workers --> Pipeline
-    
-    Agent --> MCP
-    MCP --> DB
-    Agent --> DB
-    
-    Pipeline --> GenAI
-    GenAI --> OpenAI
-    GenAI --> Google
-    Pipeline --> Processor
-    Pipeline --> Storage
-    Storage --> DB
-    Storage --> FS
-    
-    style API fill:#4A90E2
-    style Queue fill:#DC382D,color:#fff
-    style Monitor fill:#FF6B35
-    style Pipeline fill:#27AE60,color:#fff
-```
-
-### Synchronous Processing Flow
-
-Request blocks until all assets are generated. Suitable for real-time use cases with <3 products.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant FastAPI
-    participant Auth
-    participant Pipeline
-    participant GenAI
-    participant Storage
-    participant DB
-
-    Client->>FastAPI: POST /campaigns/process
-    FastAPI->>Auth: Validate X-API-Key
-    Auth-->>FastAPI: ✓ Authorized
-    
-    FastAPI->>DB: Create campaign record
-    
-    loop For each product × ratio (3 ratios)
-        FastAPI->>Storage: Check existing asset
-        alt Asset exists (reuse)
-            Storage-->>FastAPI: Return path
-        else Generate new
-            FastAPI->>GenAI: generate_image(prompt, width, height)
-            GenAI-->>FastAPI: Image bytes
-            FastAPI->>Pipeline: resize & add_text_overlay
-            Pipeline-->>FastAPI: Final image
-            FastAPI->>Storage: save_output(image, metadata)
-            Storage->>DB: Record variant
-            Storage-->>FastAPI: File path
-        end
-    end
-    
-    FastAPI->>DB: Update status → completed
-    FastAPI-->>Client: Results with asset paths
-```
-
-### Asynchronous Processing Flow
-
-Request returns immediately with job ID. Suitable for high-volume batch processing (10+ products).
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client
-    participant FastAPI
-    participant Redis
-    participant Worker
-    participant Pipeline
-    participant DB
-
-    Client->>FastAPI: POST /campaigns/jobs
-    FastAPI->>Redis: Enqueue task
-    Redis-->>FastAPI: Job ID
-    FastAPI-->>Client: 202 Accepted {job_id}
-    
-    Note over Client: Client disconnects<br/>or polls status
-    
-    Worker->>Redis: Poll for tasks
-    Redis-->>Worker: process_campaign_task
-    Worker->>Pipeline: Execute full pipeline
-    Pipeline-->>Worker: Results
-    Worker->>Redis: Store result
-    Worker->>DB: Update campaign status
-    
-    Client->>FastAPI: GET /campaigns/jobs/{job_id}
-    FastAPI->>Redis: Query status
-    Redis-->>FastAPI: Task result
-    FastAPI-->>Client: Status + results
-```
-
-### AI Monitoring Agent with Model Context Protocol
-
-The agent autonomously monitors campaigns and generates intelligent alerts using LLM tool calling:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Agent as Monitor Agent
-    participant DB as Database
-    participant MCP as MCP Server
-    participant LLM as LLM
-    participant Email as SMTP/Slack
-
-    loop Every 60 seconds
-        Agent->>DB: Get active campaigns
-        
-        alt Issue detected (SLA breach or errors)
-            Agent->>LLM: Generate alert
-            
-            Note over LLM,MCP: LLM dynamically calls MCP tools
-            
-            LLM->>MCP: get_campaign_details(campaign_id)
-            MCP->>DB: Query campaign
-            DB-->>MCP: Campaign metadata
-            MCP-->>LLM: {name, status, elapsed_time...}
-            
-            LLM->>MCP: get_product_variants(campaign_id)
-            MCP->>DB: Query variants
-            DB-->>MCP: Variant counts
-            MCP-->>LLM: {product: 2/3 ratios...}
-            
-            LLM->>MCP: get_recent_errors(campaign_id, 30)
-            MCP->>DB: Query errors
-            DB-->>MCP: Error logs
-            MCP-->>LLM: [API rate limit, ...]
-            
-            LLM->>MCP: analyze_root_cause(campaign_id)
-            MCP-->>LLM: "OpenAI rate limit"
-            
-            LLM-->>Agent: Professional email
-            
-            Agent->>Email: Send alert
-            Agent->>DB: Log alert
-            Agent->>DB: Update campaign status
-        end
-    end
-```
-
----
+**Refer to [Creative.AI](assignment/CREATIVE%20AI.pdf) for System Architecture**
 
 ## Examples
 
@@ -812,36 +617,7 @@ CREATE TABLE errors (
 
 ## Roadmap
 
-### Current Capabilities (v1.0)
-
-- ✅ 3 aspect ratio generation (1x1, 9x16, 16x9)
-- ✅ Text overlay with customizable styling
-- ✅ Asset reuse mechanism
-- ✅ REST API (sync + async endpoints)
-- ✅ Database campaign tracking
-- ✅ Interactive CLI tool
-- ✅ Docker Compose deployment
-- ✅ Comprehensive test suite
-- ✅ AI Monitoring Agent
-- ✅ LLM-generated stakeholder communications
-
-### Stretch Goals Completed ✨
-
-- ✅ Multi-provider image and textgeneration (OpenAI, Google)
-- ✅ Queue-based background processing
-- ✅ Multi-Channel Delivery - SMTP email and Slack webhooks
-- ✅ MCP Server - Dynamic tool calling for alert generation + Separate service for campaign data access
-
-### Future Enhancements (v2.0)
-
-- [ ] Cloud storage (AWS S3 bucket, Azure Blob)
-- [ ] Advanced brand compliance checks (ML-based logo detection) (only done brand colour match)
-- [ ] Video asset generation
-- [ ] A/B testing recommendations
-- [ ] Web UI (React frontend)
-- [ ] Multi-language localization
-- [ ] Kubernetes deployment manifests
-- [ ] Prometheus metrics + Grafana dashboards
+Refer to [Creative.AI](assignment/CREATIVE%20AI.pdf)
 
 ---
 
@@ -900,4 +676,4 @@ creative-ai/
 
 ---
 
-**Last Updated:** October 9, 2025
+**Last Updated:** October 12, 2025

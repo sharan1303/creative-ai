@@ -51,7 +51,6 @@ class StorageManager:
         Returns:
             Path to existing asset if found, None otherwise.
         """
-        # Build search path
         if campaign_id:
             search_dir = self.base_path / campaign_id / product_id / ratio_name
         else:
@@ -61,10 +60,9 @@ class StorageManager:
             logger.debug(f"No existing assets found at {search_dir}")
             return None
 
-        # Look for PNG files
         png_files = list(search_dir.glob("*.png"))
         if png_files:
-            asset_path = png_files[0]  # Use first match
+            asset_path = png_files[0]
             logger.info(f"Reusing existing asset: {asset_path}")
             return asset_path
 
@@ -98,7 +96,6 @@ class StorageManager:
         Returns:
             Path to saved image file
         """
-        # Build output path
         if campaign_id:
             output_dir = self.base_path / campaign_id / product_id / ratio_name
         else:
@@ -106,16 +103,13 @@ class StorageManager:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Generate filename with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{product_id}_{ratio_name}_{timestamp}.png"
         image_path = output_dir / filename
-
-        # Save image
         image_path.write_bytes(image_data)
         logger.info(f"Saved image to {image_path}")
 
-        # Save metadata sidecar
+        # Save metadata
         metadata_path = image_path.with_suffix(".json")
         metadata_with_info = {
             **metadata,

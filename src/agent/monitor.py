@@ -18,10 +18,11 @@ from src.db.database import Campaign, get_db
 from src.utils.config import settings
 from src.utils.logger import get_logger
 
-try:  # Prefer optional import guard to avoid hard failure in non-redis contexts
-    import redis.asyncio as aioredis  # type: ignore
-except Exception:  # pragma: no cover - defensive fallback
-    aioredis = None  # type: ignore
+# Prefer optional import guard to avoid hard failure in non-redis contexts
+try:  
+    import redis.asyncio as aioredis 
+except Exception:
+    aioredis = None
 
 logger = get_logger(__name__)
 
@@ -52,7 +53,7 @@ class CampaignMonitorAgent:
         self._last_check_started_at: str | None = None
         self._last_check_finished_at: str | None = None
 
-        # Initialize Redis client if available
+        # Initialise Redis client if available
         self.redis = None
         if aioredis is not None and getattr(settings, "REDIS_URL", None):
             try:
@@ -102,7 +103,6 @@ class CampaignMonitorAgent:
                 start_time = datetime.now()
                 self._last_check_started_at = start_time.isoformat()
 
-                # Check all active campaigns
                 await self.check_all_campaigns()
 
                 # Calculate next cycle
@@ -118,7 +118,7 @@ class CampaignMonitorAgent:
 
             except Exception as e:
                 logger.error(f"Monitor loop error: {e}", exc_info=True)
-                await asyncio.sleep(10)  # Brief pause before retry
+                await asyncio.sleep(10)
 
     async def check_all_campaigns(self):
         """Check all active campaigns concurrently"""
@@ -139,7 +139,6 @@ class CampaignMonitorAgent:
             batch = tasks[i : i + self.max_concurrent]
             results = await asyncio.gather(*batch, return_exceptions=True)
 
-            # Log any exceptions
             for j, result in enumerate(results):
                 if isinstance(result, Exception):
                     campaign_id = active_campaigns[i + j].id
@@ -181,11 +180,7 @@ class CampaignMonitorAgent:
         """
         try:
             logger.debug(f"Checking campaign {campaign.id}")
-
-            # Check variant counts against SLA
             await self._check_variant_counts(campaign)
-
-            # Check for error patterns
             await self._check_error_patterns(campaign)
 
         except Exception as e:
@@ -264,7 +259,6 @@ class CampaignMonitorAgent:
         logger.info(f"Triggering alert for campaign {campaign.id}: {issue_type}")
 
         try:
-            # Generate email content using MCP-enabled LLM
             email_content = await generate_alert_email(
                 campaign_id=campaign.id, issue_type=issue_type, context=context
             )
@@ -289,7 +283,6 @@ class CampaignMonitorAgent:
                 context=context,
             )
 
-            # Deliver alert
             await deliver_alert(
                 email_content=email_content, campaign=campaign, context=alert_context
             )
@@ -300,7 +293,6 @@ class CampaignMonitorAgent:
             logger.error(
                 f"Failed to send alert for campaign {campaign.id}: {e}", exc_info=True
             )
-            # Don't re-raise - continue monitoring other campaigns
 
 
 async def run_monitor_agent(check_interval: int = 60, sla_threshold_minutes: int = 10):

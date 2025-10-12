@@ -15,7 +15,6 @@ logger = get_logger(__name__)
 async def test_mcp_integration():
     """Test the MCP integration with a mock alert scenario."""
     
-    # Test scenario: insufficient variants
     campaign_id = "winter-warmth-uk-2025"
     issue_type = "insufficient_variants"
     context = {
@@ -31,7 +30,7 @@ async def test_mcp_integration():
     logger.info(f"Context: {context}")
     
     try:
-        # This should use MCP tools to gather campaign data
+        # Use MCP tools to gather campaign data
         email_content = await generate_alert_email(
             campaign_id=campaign_id,
             issue_type=issue_type,
@@ -53,11 +52,9 @@ async def test_mcp_integration():
 
 
 if __name__ == "__main__":
-    # Set environment variables for testing
     os.environ.setdefault("AGENT_LLM_PROVIDER", "google")
     os.environ.setdefault("MCP_SERVER_URL", "http://localhost:8001")
     
-    # Check if OpenAI API key is set
     if not (getattr(settings, "GOOGLE_AI_API_KEY", None) or "").strip():
        raise ValueError("GOOGLE_AI_API_KEY not set for Google provider")
     
